@@ -10,9 +10,9 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            python-version: "3.9"
-          - os: ubuntu-latest
             python-version: "3.12"
+          - os: ubuntu-latest
+            python-version: "3.13"
           - os: windows-latest
             python-version: "3.12"
     runs-on: ${{ matrix.os }}
@@ -21,67 +21,30 @@ jobs:
         shell: bash # for windows and linux
     steps:
       - uses: actions/checkout@v6
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@v6.1.0
+      - name: Install uv and set up Python ${{ matrix.python-version }}
+        uses: astral-sh/setup-uv@v9
         with:
+          enable-cache: true
           python-version: ${{ matrix.python-version }}
-      - name: Install Poetry
-        run: |
-          curl -sSL https://install.python-poetry.org | python -
-          echo "$HOME/.local/bin" >> $GITHUB_PATH
-          # Add Poetry to PATH for Windows runners (Bash shell)
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          # create a .venv folder in the working directory
-          poetry config virtualenvs.in-project true
-          poetry config virtualenvs.create true
-          # ensure poetry is installed by checking the version
-          poetry --version
       - name: Install dependencies
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          python -m pip install --upgrade pip
-          poetry install
+        run: uv sync --locked --group dev
       - name: Run pre-commit
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          poetry run pre-commit run --all-files
+        run: uv run pre-commit run --all-files
       - name: Run unit tests
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          poetry run pytest tests/ -v --tb=short -m "unit"
+        run: uv run pytest tests/ -v --tb=short -m "unit"
       - name: Run integration tests (fast)
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          poetry run pytest tests/ -v --tb=short -m "integration"
+        run: uv run pytest tests/ -v --tb=short -m "integration"
       - name: Run integration tests with large data download
         env:
           TEST_DATA: "true"
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          poetry run pytest tests/ -v --tb=short -m "integration" || true
+        run: uv run pytest tests/ -v --tb=short -m "integration" || true
       # Running notebook will download the comstock data and run
       # the entire notebook. It will take ~10 minutes to run on CI because
       # the data are downloaded every time.
       - name: Run notebook and check for completion
         env:
           TEST_DATA: "true"
-        run: |
-          if [[ "$RUNNER_OS" == "Windows" ]]; then
-            export PATH="$HOME/.local/bin:/c/Users/runneradmin/AppData/Roaming/Python/Scripts:$PATH"
-          fi
-          poetry run jupyter nbconvert --to html --execute 01_data_sampling_example.ipynb --output test_output-${{ github.run_id }}.html
+        run: uv run jupyter nbconvert --to html --execute 01_data_sampling_example.ipynb --output test_output-${{ github.run_id }}.html
       - name: Upload HTML Artifact
         if: ${{ matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest' }}
         uses: actions/upload-artifact@v6

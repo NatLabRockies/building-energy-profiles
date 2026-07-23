@@ -4,11 +4,11 @@ A Python class to help download ComStock data locally for analysis. The `ComStoc
 
 ## Installation
 
-Install and run poetry:
+Install [uv](https://docs.astral.sh/uv/) and sync the project's dependencies:
 
 ```bash
-pip install poetry
-poetry install
+pip install uv
+uv sync --group dev
 ```
 
 ## ComStockProcessor Class
@@ -105,16 +105,16 @@ Run specific test categories:
 
 ```bash
 # Unit tests only (fast)
-poetry run pytest tests/ -m "unit" -v
+uv run pytest tests/ -m "unit" -v
 
 # Integration tests (downloads small datasets)
-poetry run pytest tests/ -m "integration" -v
+uv run pytest tests/ -m "integration" -v
 
 # All tests including large dataset downloads
-TEST_DATA=true poetry run pytest tests/ -m "integration" -v
+TEST_DATA=true uv run pytest tests/ -m "integration" -v
 
 # Run all tests
-poetry run pytest tests -v
+uv run pytest tests -v
 ```
 
 ### Test Categories
@@ -124,15 +124,15 @@ poetry run pytest tests -v
 
 ### Committing
 
-Before pushing changes to GitHub, run `pre-commit` to format the code consistently:
+Before pushing changes to GitHub, run `pre-commit` to format the code consistently. `pre-commit` is installed as part of the `dev` dependency group, so run it via `uv`:
 
 ```bash
-pre-commit run --all-files
+uv run pre-commit run --all-files
 ```
 
 If this doesn't work, try:
 
 ```bash
-poetry update
-poetry run pre-commit run --all-files
+uv sync --group dev
+uv run pre-commit run --all-files
 ```

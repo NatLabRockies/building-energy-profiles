@@ -97,6 +97,7 @@ class TestComStockProcessor:
         for col in required_columns:
             assert col in metadata_df.columns
 
+    @pytest.mark.integration
     def test_process_metadata_caching(self, sample_processor):
         """Test that metadata caching works correctly."""
         # First call should download
@@ -157,6 +158,7 @@ class TestComStockProcessor:
             # Check that the file has some content
             assert Path(path).stat().st_size > 0
 
+    @pytest.mark.integration
     def test_process_building_time_series_caching(self, sample_processor):
         """Test that time series file caching works correctly."""
         # Get metadata and take one building
@@ -184,6 +186,7 @@ class TestComStockProcessor:
         # File should not have been re-downloaded
         assert file_path.stat().st_mtime == original_mtime
 
+    @pytest.mark.integration
     def test_different_state_filters(self, test_data_dir):
         """Test that different state filters work correctly."""
         # Test with a different state
@@ -196,6 +199,7 @@ class TestComStockProcessor:
         assert all(metadata_df["in.state"] == "NY")
         assert len(metadata_df) > 0
 
+    @pytest.mark.integration
     def test_building_type_filter(self, test_data_dir):
         """Test that building type filtering works correctly."""
 
@@ -212,6 +216,7 @@ class TestComStockProcessor:
         # Should only contain MediumOffice buildings
         assert all(metadata_df["in.comstock_building_type"] == "MediumOffice")
 
+    @pytest.mark.integration
     def test_error_handling_invalid_state(self, test_data_dir):
         """Test handling of invalid state codes."""
 
@@ -229,6 +234,7 @@ class TestComStockProcessor:
         # Should return empty DataFrame for invalid state
         assert len(metadata_df) == 0
 
+    @pytest.mark.integration
     def test_all_state_filter(self, test_data_dir):
         """Test that 'All' state filter works and returns multiple states."""
 
@@ -247,6 +253,7 @@ class TestComStockProcessor:
         assert len(unique_states) > 1
         assert len(metadata_df) > 0
 
+    @pytest.mark.unit
     def test_empty_dataframe_time_series(self, sample_processor):
         """Test time series processing with empty DataFrame."""
         timeseries_dir = sample_processor.base_dir / "time_series_data"
