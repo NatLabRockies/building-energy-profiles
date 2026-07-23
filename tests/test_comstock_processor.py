@@ -5,12 +5,13 @@ These tests make actual calls to the ComStock API and download real data
 to test the functionality end-to-end without mocks.
 """
 
+import os
 from pathlib import Path
 
 import pandas as pd
 import pytest
 
-from comstock_processor import ComStockProcessor
+from comstock_processor import DEFAULT_RELEASE, SUPPORTED_RELEASES, ComStockProcessor
 
 
 @pytest.fixture
@@ -64,11 +65,36 @@ class TestComStockProcessor:
         assert processor.base_dir == test_data_dir
         assert test_data_dir.exists()  # Directory should be created
 
+        # Defaults to the most recent supported release
+        assert processor.release == DEFAULT_RELEASE
+
         # Check URLs are constructed correctly
-        expected_base = "https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2024/comstock_amy2018_release_1/"
+        expected_base = "https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2025/comstock_amy2018_release_3/"
         assert processor.base_url == expected_base
-        assert processor.metadata_url == expected_base + "metadata"
+        assert processor.metadata_url == expected_base + "metadata_and_annual_results/by_state_and_county/full/parquet"
         assert processor.time_series_url == expected_base + "timeseries_individual_buildings"
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("release", list(SUPPORTED_RELEASES))
+    def test_initialization_for_each_supported_release(self, test_data_dir, release):
+        """Test that every supported release builds distinct, well-formed URLs."""
+
+        processor = ComStockProcessor(
+            state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release=release
+        )
+
+        release_info = SUPPORTED_RELEASES[release]
+        assert processor.release == release
+        assert release_info.folder in processor.base_url
+        assert processor.metadata_url.startswith(processor.base_url)
+        assert processor.time_series_url == processor.base_url + "timeseries_individual_buildings"
+
+    @pytest.mark.unit
+    def test_invalid_release_raises(self, test_data_dir):
+        """Test that an unsupported release identifier raises a clear error."""
+
+        with pytest.raises(ValueError, match="Unsupported ComStock release"):
+            ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_99")
 
     @pytest.mark.integration
     def test_process_metadata_download_and_filter(self, sample_processor):
@@ -76,11 +102,14 @@ class TestComStockProcessor:
         # Run the process_metadata method
         metadata_df = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
 
-        # Check that files were created
-        assert (sample_processor.base_dir / "comstock_metadata.parquet").exists()
+        # Check that the per-state/county partition files were downloaded
+        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
+        assert raw_dir.exists()
+        assert any(raw_dir.glob("DE-*-upgrade0.parquet"))
+
         expected_csv = (
-            sample_processor.base_dir
-            / f"{sample_processor.state}-{sample_processor.county_name}-{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
+            f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
         )
         assert expected_csv.exists()
 
@@ -98,30 +127,52 @@ class TestComStockProcessor:
             assert col in metadata_df.columns
 
     @pytest.mark.integration
+    @pytest.mark.parametrize("release", list(SUPPORTED_RELEASES))
+    def test_process_metadata_across_supported_releases(self, test_data_dir, release):
+        """Test that metadata can be downloaded and filtered for every supported release."""
+
+        processor = ComStockProcessor(
+            state="DE",
+            county_name="All",
+            building_type="SmallOffice",
+            upgrade="0",
+            base_dir=test_data_dir,
+            release=release,
+        )
+
+        metadata_df = processor.process_metadata(save_dir=test_data_dir)
+
+        assert isinstance(metadata_df, pd.DataFrame)
+        assert len(metadata_df) > 0
+        assert all(metadata_df["in.state"] == "DE")
+        assert all(metadata_df["in.comstock_building_type"] == "SmallOffice")
+
+    @pytest.mark.integration
     def test_process_metadata_caching(self, sample_processor):
         """Test that metadata caching works correctly."""
         # First call should download
         metadata_df1 = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
 
-        # Check files exist
-        parquet_file = sample_processor.base_dir / "comstock_metadata.parquet"
+        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
+        partition_files = list(raw_dir.glob("DE-*-upgrade0.parquet"))
         csv_file = (
-            sample_processor.base_dir
-            / f"{sample_processor.state}-{sample_processor.county_name}-{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
+            f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
         )
 
-        assert parquet_file.exists()
+        assert partition_files
         assert csv_file.exists()
 
         # Get modification times
-        parquet_mtime = parquet_file.stat().st_mtime
+        partition_mtimes = {path: path.stat().st_mtime for path in partition_files}
         csv_mtime = csv_file.stat().st_mtime
 
         # Second call should use cached files
         metadata_df2 = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
 
         # Files should not have been re-downloaded (same modification time)
-        assert parquet_file.stat().st_mtime == parquet_mtime
+        for path, mtime in partition_mtimes.items():
+            assert path.stat().st_mtime == mtime
         assert csv_file.stat().st_mtime == csv_mtime
 
         # DataFrames should be identical
@@ -189,14 +240,14 @@ class TestComStockProcessor:
     @pytest.mark.integration
     def test_different_state_filters(self, test_data_dir):
         """Test that different state filters work correctly."""
-        # Test with a different state
+        # Test with a different, small state (Rhode Island has only 5 counties, keeping the download small)
 
-        processor_ny = ComStockProcessor(state="NY", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir)
+        processor_ri = ComStockProcessor(state="RI", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir)
 
-        metadata_df = processor_ny.process_metadata(save_dir=test_data_dir)
+        metadata_df = processor_ri.process_metadata(save_dir=test_data_dir)
 
-        # Should only contain NY buildings
-        assert all(metadata_df["in.state"] == "NY")
+        # Should only contain RI buildings
+        assert all(metadata_df["in.state"] == "RI")
         assert len(metadata_df) > 0
 
     @pytest.mark.integration
@@ -235,6 +286,10 @@ class TestComStockProcessor:
         assert len(metadata_df) == 0
 
     @pytest.mark.integration
+    @pytest.mark.skipif(
+        os.environ.get("TEST_DATA") != "true",
+        reason="state='All' now downloads every state/county metadata partition (thousands of files); only run with TEST_DATA=true",
+    )
     def test_all_state_filter(self, test_data_dir):
         """Test that 'All' state filter works and returns multiple states."""
 
