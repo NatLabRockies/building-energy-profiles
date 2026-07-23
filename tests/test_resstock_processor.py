@@ -70,9 +70,7 @@ class TestResStockProcessor:
         """Test that an unsupported release identifier raises a clear error."""
 
         with pytest.raises(ValueError, match="Unsupported ResStock release"):
-            ResStockProcessor(
-                state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_99"
-            )
+            ResStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_99")
 
     @pytest.mark.unit
     def test_invalid_building_type_raises(self, test_data_dir):
@@ -150,8 +148,7 @@ class TestResStockProcessor:
         assert any(raw_dir.glob("DE-upgrade0.parquet"))
 
         expected_csv = (
-            sample_processor.base_dir
-            / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
             f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
         )
         assert expected_csv.exists()
@@ -172,8 +169,7 @@ class TestResStockProcessor:
         raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
         partition_files = list(raw_dir.glob("DE-upgrade0.parquet"))
         csv_file = (
-            sample_processor.base_dir
-            / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
             f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
         )
 
@@ -211,9 +207,7 @@ class TestResStockProcessor:
     @pytest.mark.integration
     def test_county_name_filter(self, test_data_dir):
         """Test that county_name filtering works (ResStock's in.county_name has no state prefix)."""
-        processor = ResStockProcessor(
-            state="DE", county_name="Kent County", building_type="All", upgrade="0", base_dir=test_data_dir
-        )
+        processor = ResStockProcessor(state="DE", county_name="Kent County", building_type="All", upgrade="0", base_dir=test_data_dir)
 
         metadata_df = processor.process_metadata(save_dir=test_data_dir)
 
