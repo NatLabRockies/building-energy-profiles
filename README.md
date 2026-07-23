@@ -143,9 +143,9 @@ uv run pytest tests -v
 ### Test Categories
 
 - **Unit tests**: Fast tests that verify initialization and basic functionality
-- **Integration tests**: Tests that download and process real ComStock data. The `state="All"` test is skipped
-  unless `TEST_DATA=true` is set, since ComStock metadata is now partitioned per state/county, so requesting
-  every state downloads a very large number of files.
+- **Integration tests**: Tests that download and process real ComStock data. `test_all_state_filter`
+  mocks state discovery down to a couple of small states so it can exercise the real `state="All"`
+  code path without downloading every state's/county's metadata partition.
 
 ### Committing
 

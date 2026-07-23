@@ -5,7 +5,6 @@ These tests make actual calls to the ComStock API and download real data
 to test the functionality end-to-end without mocks.
 """
 
-import os
 from pathlib import Path
 
 import pandas as pd
@@ -286,12 +285,15 @@ class TestComStockProcessor:
         assert len(metadata_df) == 0
 
     @pytest.mark.integration
-    @pytest.mark.skipif(
-        os.environ.get("TEST_DATA") != "true",
-        reason="state='All' now downloads every state/county metadata partition (thousands of files); only run with TEST_DATA=true",
-    )
-    def test_all_state_filter(self, test_data_dir):
-        """Test that 'All' state filter works and returns multiple states."""
+    def test_all_state_filter(self, test_data_dir, mocker):
+        """Test that 'All' state filter works and aggregates data across multiple states.
+
+        Real ComStock metadata is partitioned per state/county, so a genuine state="All" run would
+        discover and download every state's partitions (thousands of files). To keep this test fast and
+        deterministic, we patch state discovery down to a couple of small states while still exercising
+        the real "All" code path (discovery -> per-state download -> concatenation -> filtering).
+        """
+        mocker.patch.object(ComStockProcessor, "_available_states", return_value=["DE", "RI"])
 
         processor = ComStockProcessor(
             state="All",
