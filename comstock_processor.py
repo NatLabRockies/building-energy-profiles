@@ -55,6 +55,11 @@ class ComStockProcessor:
     # Public, unauthenticated S3 bucket hosting the ComStock dataset.
     BUCKET = "oedi-data-lake"
 
+    # Number of concurrent workers used for network-bound work (S3 listing/downloads). This is
+    # intentionally higher than the CPU count used elsewhere for CPU-bound parallelism, since these
+    # tasks mostly wait on network I/O rather than compute.
+    IO_WORKERS = 16
+
     def __init__(
         self,
         state: str,
@@ -195,7 +200,9 @@ class ComStockProcessor:
 
         states = self._available_states() if self.state == "All" else [self.state]
 
-        partitions = [(state, county) for state in states for county in self._available_counties(state)]
+        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
+            counties_by_state = list(executor.map(self._available_counties, states))
+        partitions = [(state, county) for state, counties in zip(states, counties_by_state) for county in counties]
 
         raw_dir = save_dir / "raw_metadata" / self.release
         raw_dir.mkdir(parents=True, exist_ok=True)
@@ -213,8 +220,7 @@ class ComStockProcessor:
 
             return save_path if save_path.exists() else None
 
-        num_workers = max(1, multiprocessing.cpu_count() - 1)
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
             downloaded = list(
                 tqdm(executor.map(download_partition, partitions), total=len(partitions), desc="Downloading metadata partitions")
             )
