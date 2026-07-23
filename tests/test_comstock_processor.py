@@ -326,3 +326,99 @@ class TestComStockProcessor:
         assert isinstance(building_ids, list)
         assert len(paths) == 0
         assert len(building_ids) == 0
+
+    @pytest.mark.integration
+    def test_list_upgrades(self, sample_processor):
+        """Test that the upgrade package lookup can be downloaded and parsed."""
+        upgrades = sample_processor.list_upgrades(save_dir=sample_processor.base_dir)
+
+        assert isinstance(upgrades, dict)
+        assert upgrades["0"] == "Baseline"
+        assert len(upgrades) > 1
+
+        cache_path = sample_processor.base_dir / f"{sample_processor.release}-upgrades_lookup.json"
+        assert cache_path.exists()
+
+    @pytest.mark.integration
+    def test_get_measure_crosswalk(self, sample_processor):
+        """Test that the measure name crosswalk can be downloaded and parsed."""
+        crosswalk = sample_processor.get_measure_crosswalk(save_dir=sample_processor.base_dir)
+
+        assert isinstance(crosswalk, pd.DataFrame)
+        assert "measure_id" in crosswalk.columns
+        assert any(col.endswith("_upgrade_id") for col in crosswalk.columns)
+
+    @pytest.mark.integration
+    def test_find_upgrade_id_across_releases(self, test_data_dir):
+        """Test that a stable measure_id resolves to the correct upgrade id in different releases."""
+        processor = ComStockProcessor(
+            state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_3"
+        )
+
+        # "hvac_0005" (Heat Pump RTU) happens to be upgrade "1" in every currently-supported release
+        upgrade_id_r3 = processor.find_upgrade_id(save_dir=test_data_dir, measure_id="hvac_0005")
+        upgrade_id_r1 = processor.find_upgrade_id(save_dir=test_data_dir, measure_id="hvac_0005", target_release="release_1")
+
+        assert upgrade_id_r3 == "1"
+        assert upgrade_id_r1 == "1"
+
+    @pytest.mark.integration
+    def test_find_upgrade_id_missing_measure_returns_none(self, test_data_dir):
+        """Test that an unknown measure_id returns None instead of raising."""
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir)
+
+        assert processor.find_upgrade_id(save_dir=test_data_dir, measure_id="does_not_exist") is None
+
+    @pytest.mark.integration
+    def test_find_upgrade_id_release_not_covered_raises(self, test_data_dir):
+        """Test that requesting a release not covered by the currently loaded crosswalk raises a clear error."""
+        processor = ComStockProcessor(
+            state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_1"
+        )
+
+        # release_1's crosswalk only covers itself and earlier releases, not release_3
+        with pytest.raises(ValueError, match="does not include"):
+            processor.find_upgrade_id(save_dir=test_data_dir, measure_id="hvac_0005", target_release="release_3")
+
+    @pytest.mark.unit
+    def test_find_upgrade_id_invalid_target_release_raises(self, test_data_dir):
+        """Test that an invalid target_release raises before attempting any download."""
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir)
+
+        with pytest.raises(ValueError, match="Unsupported ComStock release"):
+            processor.find_upgrade_id(save_dir=test_data_dir, measure_id="hvac_0005", target_release="release_99")
+
+    @pytest.mark.integration
+    def test_process_metadata_for_upgrades_explicit_list(self, test_data_dir):
+        """Test that metadata for multiple explicit upgrades can be downloaded and combined for comparison."""
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="SmallOffice", upgrade="0", base_dir=test_data_dir)
+
+        combined_df = processor.process_metadata_for_upgrades(save_dir=test_data_dir, upgrades=["0", "1"])
+
+        assert isinstance(combined_df, pd.DataFrame)
+        assert len(combined_df) > 0
+        assert set(combined_df["upgrade"].unique()) == {0, 1}
+        assert set(combined_df["in.upgrade_name"].unique()) == {"Baseline", "Variable Speed HP RTU, Electric Backup"}
+
+        # the same buildings should be simulated under both packages, enabling a building-level comparison
+        buildings_per_upgrade = combined_df.groupby("upgrade")["bldg_id"].apply(set)
+        assert buildings_per_upgrade[0] == buildings_per_upgrade[1]
+
+    @pytest.mark.unit
+    def test_process_metadata_for_upgrades_defaults_to_every_upgrade(self, tmp_path, mocker):
+        """Test that process_metadata_for_upgrades() defaults to every upgrade from list_upgrades()."""
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="SmallOffice", upgrade="0", base_dir=tmp_path)
+
+        mocker.patch.object(ComStockProcessor, "list_upgrades", return_value={"0": "Baseline", "1": "Some Package"})
+
+        def fake_download_for_upgrade(save_dir, upgrade):
+            return pd.DataFrame({"bldg_id": [1], "upgrade": [int(upgrade)], "in.upgrade_name": [f"pkg-{upgrade}"]})
+
+        mock_download = mocker.patch.object(ComStockProcessor, "_download_metadata_for_upgrade", side_effect=fake_download_for_upgrade)
+
+        combined_df = processor.process_metadata_for_upgrades(save_dir=tmp_path)
+
+        assert mock_download.call_count == 2
+        called_upgrades = {call.args[1] for call in mock_download.call_args_list}
+        assert called_upgrades == {"0", "1"}
+        assert sorted(combined_df["upgrade"].tolist()) == [0, 1]

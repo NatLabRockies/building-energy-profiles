@@ -7,6 +7,7 @@ from NREL's ComStock dataset hosted on AWS S3.
 @author: nllong
 """
 
+import json
 import multiprocessing
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
@@ -172,7 +173,7 @@ class ComStockProcessor:
         return [name.split("=", 1)[1] for name in prefixes if name.startswith("county=")]
 
     def process_metadata(self, save_dir: Path) -> pd.DataFrame:
-        """Download (if needed) and process the ComStock metadata for the configured release.
+        """Download (if needed) and process the ComStock metadata for the configured release and upgrade.
 
         Unlike a single national metadata file, ComStock metadata is published per state/county/upgrade
         partition, e.g. state=DE/county=G1000010/DE_G1000010_upgrade0.parquet. This method discovers the
@@ -189,8 +190,60 @@ class ComStockProcessor:
         Returns:
             DataFrame: the resulting metadata filtered by the classes "constraints".
         """
+        return self._download_metadata_for_upgrade(save_dir, self.upgrade)
+
+    def process_metadata_for_upgrades(self, save_dir: Path, upgrades: list[str] | None = None) -> pd.DataFrame:
+        """Download and combine metadata/annual-results for multiple upgrade packages, to compare buildings
+        across packages.
+
+        Each ComStock upgrade represents a different measure package applied to the same baseline building
+        sample (e.g. "Baseline", "Heat Pump RTU", "VRF with DOAS" - see `list_upgrades()`). Every metadata
+        partition already includes an `upgrade` id column and an `in.upgrade_name` column, so combining
+        several upgrades' worth of metadata into one DataFrame lets you group by `bldg_id` and compare
+        results (e.g. energy consumption, savings) for the same building across packages.
+
+        Note: a single building can appear more than once per upgrade in the "full" metadata, since it can
+        be reused to represent multiple census tracts (each with its own `weight` and demographic
+        attributes). If you only care about a building's simulated performance (not tract-level
+        weighting), group/filter by `bldg_id` and `upgrade` and take the first row of each group.
+
+        Args:
+            save_dir (Path): path to save the metadata
+            upgrades (list[str] | None): the upgrade ids to download and combine. Defaults to every
+                upgrade available for this release (from `list_upgrades()`) -- i.e. every package,
+                including the baseline (upgrade "0").
+
+        Returns:
+            DataFrame: the combined, filtered metadata for all requested upgrades, with `upgrade` and
+                `in.upgrade_name` columns identifying which package each row belongs to.
+        """
+        all_upgrades = list(self.list_upgrades(save_dir))
+        if upgrades is None:
+            upgrades = all_upgrades
+
+        combo_label = "all" if set(upgrades) == set(all_upgrades) else "-".join(sorted(upgrades))
+        output_csv = (
+            save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-upgrades_{combo_label}-selected_metadata.csv"
+        )
+        if output_csv.exists():
+            print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
+            return pd.read_csv(output_csv)
+
+        frames = [self._download_metadata_for_upgrade(save_dir, upgrade) for upgrade in upgrades]
+        combined_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+
+        combined_df.to_csv(output_csv, index=False)
+
+        return combined_df
+
+    def _download_metadata_for_upgrade(self, save_dir: Path, upgrade: str) -> pd.DataFrame:
+        """Download (if needed) and filter the ComStock metadata for a single upgrade package.
+
+        This is the shared implementation behind `process_metadata()` (which always uses `self.upgrade`)
+        and `process_metadata_for_upgrades()` (which calls this once per requested upgrade).
+        """
         # check if the csv already exists, don't create it again if so, but give a warning
-        output_csv = save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-{self.upgrade}-selected_metadata.csv"
+        output_csv = save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-{upgrade}-selected_metadata.csv"
         if output_csv.exists():
             print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
             return pd.read_csv(output_csv)
@@ -209,9 +262,9 @@ class ComStockProcessor:
 
         def download_partition(partition: tuple[str, str]) -> Path | None:
             state, county = partition
-            save_path = raw_dir / f"{state}-{county}-upgrade{self.upgrade}.parquet"
+            save_path = raw_dir / f"{state}-{county}-upgrade{upgrade}.parquet"
             if not save_path.exists():
-                partition_url = f"{self.metadata_url}/state={state}/county={county}/{state}_{county}_upgrade{self.upgrade}.parquet"
+                partition_url = f"{self.metadata_url}/state={state}/county={county}/{state}_{county}_upgrade{upgrade}.parquet"
                 try:
                     self.download_file(partition_url, save_path)
                 except requests.RequestException:
@@ -222,7 +275,11 @@ class ComStockProcessor:
 
         with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
             downloaded = list(
-                tqdm(executor.map(download_partition, partitions), total=len(partitions), desc="Downloading metadata partitions")
+                tqdm(
+                    executor.map(download_partition, partitions),
+                    total=len(partitions),
+                    desc=f"Downloading metadata partitions (upgrade {upgrade})",
+                )
             )
 
         partition_files = [path for path in downloaded if path is not None]
@@ -243,6 +300,88 @@ class ComStockProcessor:
         meta_df.to_csv(output_csv, index=False)
 
         return meta_df
+
+    def list_upgrades(self, save_dir: Path) -> dict[str, str]:
+        """Download (if needed) and return the upgrade package lookup for this release.
+
+        Each ComStock release publishes an `upgrades_lookup.json` mapping upgrade id -> a human-readable
+        measure package name (e.g. "0" -> "Baseline", "1" -> "Variable Speed HP RTU, Electric Backup").
+        Which upgrade ids exist, and what they mean, differs release to release -- see
+        `get_measure_crosswalk()` for a stable way to find the "same" measure package across releases.
+
+        Args:
+            save_dir (Path): path to save the upgrade lookup file
+
+        Returns:
+            dict[str, str]: upgrade id -> measure package name, for this release.
+        """
+        save_path = save_dir / f"{self.release}-upgrades_lookup.json"
+        if not save_path.exists():
+            self.download_file(f"{self.base_url}upgrades_lookup.json", save_path)
+
+        with open(save_path) as file:
+            upgrades: dict[str, str] = json.load(file)
+        return upgrades
+
+    def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
+        """Download (if needed) and return the measure name crosswalk for this release.
+
+        The crosswalk maps a stable `measure_id` (e.g. "hvac_0005") to the upgrade id/name used for that
+        measure in this release and in earlier releases (columns named like
+        "{year}_{release_folder}_upgrade_id"/"_upgrade_name"). Since upgrade ids are *not* stable across
+        releases, this is the mechanism for finding the "same" measure package across releases -- see
+        `find_upgrade_id()`. Note that a given release's crosswalk only covers itself and earlier releases,
+        not later ones, so the newest supported release (DEFAULT_RELEASE) has the most complete crosswalk
+        covering all three currently-supported releases.
+
+        Args:
+            save_dir (Path): path to save the crosswalk file
+
+        Returns:
+            DataFrame: the measure name crosswalk table for this release.
+        """
+        save_path = save_dir / f"{self.release}-measure_name_crosswalk.csv"
+        if not save_path.exists():
+            self.download_file(f"{self.base_url}measure_name_crosswalk.csv", save_path)
+
+        return pd.read_csv(save_path)
+
+    def find_upgrade_id(self, save_dir: Path, measure_id: str, target_release: str | None = None) -> str | None:
+        """Look up the upgrade id used for a stable `measure_id` in a specific release.
+
+        Args:
+            save_dir (Path): path to save the crosswalk file
+            measure_id (str): the stable measure id from `get_measure_crosswalk()`, e.g. "hvac_0005"
+            target_release (str | None): which release's upgrade id to look up. Defaults to `self.release`.
+                Must be one of SUPPORTED_RELEASES, and must be covered by the currently loaded release's
+                crosswalk (a release's crosswalk only covers itself and earlier releases -- use
+                release="release_3" for a crosswalk covering all three currently-supported releases).
+
+        Returns:
+            str | None: the upgrade id for that measure in the target release, or None if the measure
+                wasn't included in that release.
+        """
+        target_release = target_release or self.release
+        if target_release not in SUPPORTED_RELEASES:
+            supported = ", ".join(SUPPORTED_RELEASES)
+            raise ValueError(f"Unsupported ComStock release '{target_release}'. Supported releases are: {supported}.")
+
+        target_info = SUPPORTED_RELEASES[target_release]
+        id_column = f"{target_info.year}_{target_info.folder}_upgrade_id"
+
+        crosswalk = self.get_measure_crosswalk(save_dir)
+        if id_column not in crosswalk.columns:
+            raise ValueError(
+                f"The '{self.release}' crosswalk does not include a '{id_column}' column (it only covers "
+                f"itself and earlier releases). Try find_upgrade_id() on a processor configured with a "
+                f"newer release, e.g. release='release_3', which covers all supported releases."
+            )
+
+        matches = crosswalk.loc[crosswalk["measure_id"] == measure_id, id_column]
+        if matches.empty or pd.isna(matches.iloc[0]):
+            return None
+
+        return str(int(matches.iloc[0]))
 
     def process_building_time_series(self, data_frame: pd.DataFrame, save_dir: Path) -> tuple[list[Path], list[str]]:
         """Pull the latest time series data from the BuildStock data files online using parallel execution."""
