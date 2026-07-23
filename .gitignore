@@ -16,8 +16,9 @@ test_output.html
 # don't save any of the large files
 source_files/*.pbf
 
-# Large files - do not commit ComStock results
+# Large files - do not commit ComStock/ResStock results
 datasets/comstock
+datasets/resstock
 datasets/test_data
 !datasets/comstock/README.md
 

@@ -7,34 +7,14 @@ from NREL's ComStock dataset hosted on AWS S3.
 @author: nllong
 """
 
-import json
-import multiprocessing
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
 from pathlib import Path
 
 import pandas as pd
 import requests
 from tqdm import tqdm
 
-# XML namespace used in the S3 "list bucket" (list-type=2) XML responses.
-_S3_LIST_XML_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
-
-
-@dataclass(frozen=True)
-class ComStockRelease:
-    """Describes where a single published ComStock release lives on the OEDI data lake.
-
-    NREL periodically republishes older releases under the most recent year's directory using a
-    consistent, harmonized layout (partitioned by state/county), so `year` below is the directory
-    that currently hosts this release, not necessarily the year it was first published.
-    """
-
-    year: str
-    folder: str
-    label: str
-
+from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, validate_release
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
 # this writing, under the 2025 directory of the OEDI data lake using the same
@@ -43,24 +23,16 @@ class ComStockRelease:
 #
 # When NREL publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
 # default) and drop the oldest entry to keep this rolling window at three supported releases.
-SUPPORTED_RELEASES: dict[str, ComStockRelease] = {
-    "release_1": ComStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
-    "release_2": ComStockRelease(year="2025", folder="comstock_amy2018_release_2", label="ComStock AMY2018 Release 2"),
-    "release_3": ComStockRelease(year="2025", folder="comstock_amy2018_release_3", label="ComStock AMY2018 Release 3"),
+SUPPORTED_RELEASES: dict[str, BuildingStockRelease] = {
+    "release_1": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
+    "release_2": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_2", label="ComStock AMY2018 Release 2"),
+    "release_3": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_3", label="ComStock AMY2018 Release 3"),
 }
 
 DEFAULT_RELEASE = "release_3"
 
 
-class ComStockProcessor:
-    # Public, unauthenticated S3 bucket hosting the ComStock dataset.
-    BUCKET = "oedi-data-lake"
-
-    # Number of concurrent workers used for network-bound work (S3 listing/downloads). This is
-    # intentionally higher than the CPU count used elsewhere for CPU-bound parallelism, since these
-    # tasks mostly wait on network I/O rather than compute.
-    IO_WORKERS = 16
-
+class ComStockProcessor(BuildingStockProcessor):
     def __init__(
         self,
         state: str,
@@ -81,9 +53,7 @@ class ComStockProcessor:
             release (str): which ComStock release to use. Must be one of SUPPORTED_RELEASES.
                 Defaults to DEFAULT_RELEASE (the most recent supported release).
         """
-        if release not in SUPPORTED_RELEASES:
-            supported = ", ".join(SUPPORTED_RELEASES)
-            raise ValueError(f"Unsupported ComStock release '{release}'. Supported releases are: {supported}.")
+        validate_release(release, SUPPORTED_RELEASES, "ComStock")
 
         self.state = state
         self.county_name = county_name
@@ -113,58 +83,6 @@ class ComStockProcessor:
         )
         self.metadata_url = f"https://{self.BUCKET}.s3.amazonaws.com/{self._metadata_key_prefix.rstrip('/')}"
         self.time_series_url = self.base_url + "timeseries_individual_buildings"
-
-    def download_file(self, url: str, save_path: Path) -> None:
-        response = requests.get(url, timeout=300)
-        if response.status_code == 200:
-            with open(save_path, "wb") as file:
-                file.write(response.content)
-            # TODO: need to create valid logger so that we don't always show these messages
-            # tqdm.write(f"File downloaded successfully: {save_path}")
-        else:
-            tqdm.write(f"Failed to download file: {url}")
-
-    def _list_common_prefixes(self, key_prefix: str) -> list[str]:
-        """List the immediate child "folder" names directly under an S3 key prefix.
-
-        Uses the public, unauthenticated S3 list-objects-v2 REST API against the oedi-data-lake
-        bucket, e.g. to discover which state=XX or county=YYYYYYY partitions exist.
-        """
-        names: list[str] = []
-        continuation_token = None
-
-        while True:
-            params = {"list-type": "2", "prefix": key_prefix, "delimiter": "/"}
-            if continuation_token:
-                params["continuation-token"] = continuation_token
-
-            response = requests.get(f"https://{self.BUCKET}.s3.amazonaws.com/", params=params, timeout=60)
-            response.raise_for_status()
-            # The XML here comes from AWS S3's own list-objects-v2 API against a hardcoded, trusted
-            # bucket (not user-supplied data), so the usual XXE concerns with `xml.etree` don't apply.
-            root = ET.fromstring(response.content)  # noqa: S314
-
-            for common_prefix in root.findall("s3:CommonPrefixes", _S3_LIST_XML_NS):
-                prefix_el = common_prefix.find("s3:Prefix", _S3_LIST_XML_NS)
-                if prefix_el is None or prefix_el.text is None:
-                    continue
-                names.append(prefix_el.text[len(key_prefix) :].rstrip("/"))
-
-            is_truncated_el = root.find("s3:IsTruncated", _S3_LIST_XML_NS)
-            if is_truncated_el is None or is_truncated_el.text != "true":
-                break
-
-            token_el = root.find("s3:NextContinuationToken", _S3_LIST_XML_NS)
-            if token_el is None or not token_el.text:
-                break
-            continuation_token = token_el.text
-
-        return names
-
-    def _available_states(self) -> list[str]:
-        """Return the state abbreviations that have published metadata for this release."""
-        prefixes = self._list_common_prefixes(self._metadata_key_prefix)
-        return [name.split("=", 1)[1] for name in prefixes if name.startswith("state=")]
 
     def _available_counties(self, state: str) -> list[str]:
         """Return the county FIPS-style codes (e.g. "G1000010") published for a given state."""
@@ -301,28 +219,6 @@ class ComStockProcessor:
 
         return meta_df
 
-    def list_upgrades(self, save_dir: Path) -> dict[str, str]:
-        """Download (if needed) and return the upgrade package lookup for this release.
-
-        Each ComStock release publishes an `upgrades_lookup.json` mapping upgrade id -> a human-readable
-        measure package name (e.g. "0" -> "Baseline", "1" -> "Variable Speed HP RTU, Electric Backup").
-        Which upgrade ids exist, and what they mean, differs release to release -- see
-        `get_measure_crosswalk()` for a stable way to find the "same" measure package across releases.
-
-        Args:
-            save_dir (Path): path to save the upgrade lookup file
-
-        Returns:
-            dict[str, str]: upgrade id -> measure package name, for this release.
-        """
-        save_path = save_dir / f"{self.release}-upgrades_lookup.json"
-        if not save_path.exists():
-            self.download_file(f"{self.base_url}upgrades_lookup.json", save_path)
-
-        with open(save_path) as file:
-            upgrades: dict[str, str] = json.load(file)
-        return upgrades
-
     def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
         """Download (if needed) and return the measure name crosswalk for this release.
 
@@ -362,9 +258,7 @@ class ComStockProcessor:
                 wasn't included in that release.
         """
         target_release = target_release or self.release
-        if target_release not in SUPPORTED_RELEASES:
-            supported = ", ".join(SUPPORTED_RELEASES)
-            raise ValueError(f"Unsupported ComStock release '{target_release}'. Supported releases are: {supported}.")
+        validate_release(target_release, SUPPORTED_RELEASES, "ComStock")
 
         target_info = SUPPORTED_RELEASES[target_release]
         id_column = f"{target_info.year}_{target_info.folder}_upgrade_id"
@@ -382,33 +276,6 @@ class ComStockProcessor:
             return None
 
         return str(int(matches.iloc[0]))
-
-    def process_building_time_series(self, data_frame: pd.DataFrame, save_dir: Path) -> tuple[list[Path], list[str]]:
-        """Pull the latest time series data from the BuildStock data files online using parallel execution."""
-        num_workers = max(1, multiprocessing.cpu_count() - 1)
-        print(f"Number of workers: {num_workers}")
-
-        def download_task(row: pd.Series) -> tuple[Path, str]:
-            building_id = str(row["bldg_id"])
-
-            # Check if file already exists
-            save_path = save_dir / f"bldg_id-{building_id}-upgrade-{self.upgrade}.parquet"
-            if save_path.exists():
-                return save_path, building_id
-
-            building_time_series_file = (
-                f"{self.time_series_url}/by_state/upgrade={self.upgrade}/state={row['in.state']}/{building_id}-{self.upgrade}.parquet"
-            )
-            self.download_file(building_time_series_file, save_path)
-            return save_path, building_id
-
-        data_rows = [row for _, row in data_frame.iterrows()]
-        with ThreadPoolExecutor(max_workers=num_workers) as executor:
-            results = list(tqdm(executor.map(download_task, data_rows), total=len(data_rows)))
-
-        # break out the paths and building_ids
-        paths, building_ids = zip(*results) if results else ([], [])
-        return list(paths), list(building_ids)
 
 
 def main() -> None:

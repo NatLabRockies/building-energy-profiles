@@ -176,11 +176,85 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 - **Progress Tracking**: Shows download progress with tqdm progress bars
 - **Efficient Filtering**: Uses pandas parquet filtering for large datasets
 
+## ResStockProcessor Class
+
+The `ResStockProcessor` class (in `resstock_processor.py`) provides the same interface for NREL's
+**residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
+its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
+`BuildingStockProcessor` base class (`building_stock_processor.py`), but has its own metadata layout and
+release registry, since ResStock's file structure and building-type categories differ from ComStock's.
+
+```python
+from pathlib import Path
+from resstock_processor import ResStockProcessor
+
+processor = ResStockProcessor(
+    state="CA",
+    county_name="All",
+    building_type="Multi-Family with 5+ Units",  # see "Handling Multifamily Buildings" below
+    upgrade="0",
+    base_dir=Path("./datasets/resstock"),
+)
+metadata_df = processor.process_metadata(save_dir=processor.base_dir)
+```
+
+### Key differences from ComStockProcessor
+
+- **Metadata partitioning**: ResStock metadata is partitioned only by **state** (e.g.
+  `state=DE/DE_upgrade0.parquet`), not by state *and* county like ComStock. Specifying `county_name` doesn't
+  reduce how much is downloaded (there's only one file per state/upgrade); it's filtered locally afterward.
+- **`county_name` format**: ResStock's `in.county_name` values don't include the state prefix ComStock uses
+  -- pass `"Kent County"`, not `"DE, Kent County"`.
+- **`building_type` values**: use one of `RESSTOCK_BUILDING_TYPES` (ResStock's residential housing
+  categories), not ComStock's commercial building types:
+  - `Mobile Home`, `Single-Family Detached`, `Single-Family Attached`, `Multi-Family with 2 - 4 Units`,
+    `Multi-Family with 5+ Units`
+- **Releases**: only `"release_1"` (the default) is currently supported. Unlike ComStock, ResStock hasn't
+  been fully remastered into a single consistent layout across multiple releases yet -- see
+  `SUPPORTED_RELEASES` in `resstock_processor.py` for notes on adding more releases later.
+- **Measure crosswalk format**: `get_measure_crosswalk()` downloads an **Excel** file
+  (`measure_name_crosswalk_res_{year}_{release}.xlsx`), not a csv like ComStock (this is why
+  [`openpyxl`](https://openpyxl.readthedocs.io/) is a dependency).
+
+### Handling Multifamily Buildings
+
+ResStock simulates **individual dwelling units**, not whole buildings: a single "Multi-Family with 5+ Units"
+row is one apartment unit, not the building it's in. There's no shared "building id" tying multiple sampled
+units back to the same real building -- each unit is an independently sampled, weighted record. Relevant
+columns:
+
+- `in.geometry_building_type_recs` — the housing type (one of `RESSTOCK_BUILDING_TYPES`); filter/group on
+  this to select multifamily units.
+- `in.geometry_building_number_units_mf` — how many units are in that unit's (whole) building.
+- `in.geometry_building_horizontal_location_mf` / `in.geometry_building_level_mf` — the unit's position
+  within the building (corner/middle, top/bottom floor), which affects heat transfer through shared
+  walls/floors/ceilings with neighboring units.
+- `weight` / `in.units_represented` — the sampling weight used to scale a simulated unit up to the full
+  housing stock population.
+
+```python
+processor = ResStockProcessor(
+    state="DE", county_name="All", building_type="Multi-Family with 5+ Units", upgrade="0", base_dir=base_dir
+)
+multifamily_units_df = processor.process_metadata(save_dir=base_dir)
+
+# Weighted total number of real housing units this sample represents
+multifamily_units_df["weight"].sum()
+```
+
+### `process_metadata_for_upgrades`, `list_upgrades`, `get_measure_crosswalk`, `find_upgrade_id`
+
+`ResStockProcessor` supports the same measure-package comparison methods documented above for
+`ComStockProcessor` (`process_metadata_for_upgrades`, `list_upgrades`, `get_measure_crosswalk`,
+`find_upgrade_id`) -- the only difference is the crosswalk file format (xlsx, not csv) and building-type
+values (residential, not commercial), described above.
+
 ## Development
 
 ## Testing
 
-The ComStock processor includes comprehensive unit and integration tests that validate the downloading and processing functionality.
+The processor includes comprehensive unit and integration tests validating both `ComStockProcessor`
+(`tests/test_comstock_processor.py`) and `ResStockProcessor` (`tests/test_resstock_processor.py`).
 
 ### Running Tests
 
