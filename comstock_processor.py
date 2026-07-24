@@ -103,12 +103,12 @@ class ComStockProcessor:
 
         return meta_df
 
-    def process_building_time_series(self, data_frame, save_dir: Path) -> None:
+    def process_building_time_series(self, data_frame: pd.DataFrame, save_dir: Path) -> tuple[list[Path], list[str]]:
         """Pull the latest time series data from the BuildStock data files online using parallel execution."""
         num_workers = max(1, multiprocessing.cpu_count() - 1)
         print(f"Number of workers: {num_workers}")
 
-        def download_task(row):
+        def download_task(row: pd.Series) -> tuple[Path, str]:
             building_id = str(row["bldg_id"])
 
             # Check if file already exists

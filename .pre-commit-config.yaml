@@ -30,7 +30,7 @@ repos:
         files: \.(json|template)$
   # https://docs.astral.sh/ruff/integrations/#pre-commit
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.11.10
+    rev: v0.15.22
     hooks:
       # Run the linter
       - id: ruff
@@ -39,8 +39,14 @@ repos:
       # Run the formatter
       - id: ruff-format
         types_or: [python, pyi, jupyter]
+  # https://github.com/astral-sh/uv-pre-commit
+  - repo: https://github.com/astral-sh/uv-pre-commit
+    rev: 0.11.31
+    hooks:
+      # Keep uv.lock in sync with pyproject.toml
+      - id: uv-lock
   - repo: https://github.com/kynan/nbstripout
-    rev: 0.8.1
+    rev: 0.9.1
     hooks:
       - id: nbstripout
         types: [jupyter]

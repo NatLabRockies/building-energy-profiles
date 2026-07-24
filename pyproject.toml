@@ -1,47 +1,49 @@
-[tool.poetry]
+[project]
 name = "comstock-processor"
 version = "0.1.0"
 description = "A tool to download and process ComStock data."
-authors = ["Nicholas Long <nllong>"]
-license = "BSD"
-packages = []
+authors = [{ name = "Nicholas Long" }]
+license = "BSD-3-Clause"
+requires-python = ">=3.12"
+dependencies = [
+    "pandas>=3.0.5",
+    "requests>=2.32.5",
+    "geopandas>=1.1.4",
+    "tqdm>=4.69.0",
+    "seaborn>=0.13.2",
+    "matplotlib>=3.11.1",
+    # although not called directly, these are
+    # needed for processing parquet files
+    "fastparquet>=2026.5.0",
+    "pyarrow>=25.0.0",
+]
 
-[tool.poetry.dependencies]
-python = "^3.12"
-pandas = ">2"
-requests = "~2.32"
-pathlib = "^1.0.1"
-geopandas = "^1.1.2"
-tqdm = "^4.67.1"
-seaborn = "^0.13.2"
-matplotlib = "^3.10.8"
+[dependency-groups]
+dev = [
+    "pytest>=9.1.1",
+    "pytest-mock>=3.15.1",
+    "mypy>=2.3.0",
+    "pre-commit>=4.6.1",
+    "ipykernel>=7.3.0",
+    "jupyter>=1.1.1",
+    "nbformat>=5.10.4",
+]
 
-# although not called directory, these are
-# needed for processing parquet files
-fastparquet = "^2025.12.0"
-pyarrow = "^22.0.0"
-
-[tool.poetry.group.dev.dependencies]
-pytest = "^9.0.2"
-pytest-mock = "^3.10.0"
-mypy = "^1.19"
-pre-commit = "^4.5.1"
-ipykernel = "^7.1.0"
-jupyter = "^1.1.1"
-nbformat = "^5.10.4"
-
-[build-system]
-requires = ["poetry-core>=1.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.uv]
+package = false
 
 [tool.mypy]
-python_version = "3.8"
+python_version = "3.12"
 files = [
-    "your_module.py",
-    "tests/"
+    "comstock_processor.py",
+    "tests/",
 ]
 ignore_missing_imports = true
 strict = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
 
 [tool.pytest.ini_options]
 minversion = "6.0"
