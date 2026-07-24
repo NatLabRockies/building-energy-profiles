@@ -217,7 +217,7 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 The `ResStockProcessor` class (in `resstock_processor.py`) provides the same interface for NREL's
 **residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
 its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
-`BuildingStockProcessor` base class (`building_stock_processor.py`), but has its own metadata layout and
+`BuildStockProcessor` base class (`buildstock_processor.py`), but has its own metadata layout and
 release registry, since ResStock's file structure and building-type categories differ from ComStock's.
 
 ```python

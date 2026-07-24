@@ -10,7 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from building_stock_processor import scope_label, sqft_label
+from buildstock_processor import scope_label, sqft_label
 from comstock_processor import DEFAULT_RELEASE, SUPPORTED_RELEASES, ComStockProcessor
 
 

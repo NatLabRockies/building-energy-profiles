@@ -2,7 +2,7 @@
 ResStock Processor - A tool to download and process ResStock data.
 
 This module provides utilities for downloading metadata and time series data from NREL's ResStock
-dataset hosted on AWS S3, building on the shared `BuildingStockProcessor` infrastructure also used by
+dataset hosted on AWS S3, building on the shared `BuildStockProcessor` infrastructure also used by
 `ComStockProcessor`.
 
 Unlike ComStock, ResStock simulates individual dwelling units, not whole buildings: each metadata row is
@@ -28,7 +28,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, scope_label, sqft_label, validate_release
+from buildstock_processor import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
 
 # The ResStock housing-type categories used in `in.geometry_building_type_recs`. Filtering on one of the
 # "Multi-Family" values selects dwelling units within multifamily buildings (not whole buildings -- see the
@@ -46,14 +46,14 @@ RESSTOCK_BUILDING_TYPES = (
 # consistent by-state-partitioned layout under the 2025 directory, but other releases (e.g. the 2024
 # resstock_amy2018_release_2) use a different directory layout and aren't supported here yet. Add them
 # following the same pattern once their layout is confirmed.
-SUPPORTED_RELEASES: dict[str, BuildingStockRelease] = {
-    "release_1": BuildingStockRelease(year="2025", folder="resstock_amy2018_release_1", label="ResStock AMY2018 Release 1"),
+SUPPORTED_RELEASES: dict[str, BuildStockRelease] = {
+    "release_1": BuildStockRelease(year="2025", folder="resstock_amy2018_release_1", label="ResStock AMY2018 Release 1"),
 }
 
 DEFAULT_RELEASE = "release_1"
 
 
-class ResStockProcessor(BuildingStockProcessor):
+class ResStockProcessor(BuildStockProcessor):
     def __init__(
         self,
         state: str,

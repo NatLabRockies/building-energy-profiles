@@ -1,5 +1,5 @@
 """
-Building Stock Processor - shared infrastructure for downloading and processing
+BuildStock Processor - shared infrastructure for downloading and processing
 NREL building stock datasets (ComStock, ResStock) hosted on the OEDI data lake.
 
 ComStockProcessor and ResStockProcessor both build on this module: the two datasets share the same S3
@@ -23,7 +23,7 @@ _S3_LIST_XML_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
 
 @dataclass(frozen=True)
-class BuildingStockRelease:
+class BuildStockRelease:
     """Describes where a single published release of a building stock dataset (ComStock or ResStock) lives
     on the OEDI data lake.
 
@@ -37,7 +37,7 @@ class BuildingStockRelease:
     label: str
 
 
-def validate_release(release: str, supported_releases: dict[str, BuildingStockRelease], product: str) -> None:
+def validate_release(release: str, supported_releases: dict[str, BuildStockRelease], product: str) -> None:
     """Raise a clear ValueError if `release` isn't one of `supported_releases`."""
     if release not in supported_releases:
         supported = ", ".join(supported_releases)
@@ -66,7 +66,7 @@ def sqft_label(min_sqft: float | None, max_sqft: float | None) -> str:
     return f"{lo}-{hi}sqft"
 
 
-class BuildingStockProcessor:
+class BuildStockProcessor:
     """Shared base class for ComStockProcessor and ResStockProcessor.
 
     Provides S3 listing/downloading, upgrade package lookup, and time series downloading, since those are
