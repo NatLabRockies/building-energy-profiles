@@ -72,6 +72,66 @@ Downloads time series data for buildings specified in the input DataFrame using 
 - Downloads from the ComStock AWS S3 bucket
 - Returns paths and building IDs of downloaded files
 
+### Comparing Buildings Across Measure Packages
+
+Each ComStock "upgrade" represents a different energy-efficiency measure package (e.g. a heat pump RTU, VRF
+system, or envelope upgrade) applied to the same baseline building sample. `ComStockProcessor` provides methods
+to discover those packages and download metadata for several of them at once, so you can compare how a building
+performs under different packages.
+
+#### `list_upgrades(save_dir: Path) -> dict[str, str]`
+Downloads (and caches) the release's `upgrades_lookup.json`, returning a mapping of upgrade id -> package name,
+e.g. `{"0": "Baseline", "1": "Variable Speed HP RTU, Electric Backup", ...}`. **Which upgrade ids exist, and what
+they mean, is different for every release** (release_1, release_2, and release_3 each have a different number of
+packages and, in some cases, different ids for what looks like the same package).
+
+#### `process_metadata_for_upgrades(save_dir: Path, upgrades: list[str] | None = None) -> pd.DataFrame`
+Downloads and combines metadata for multiple upgrades into a single DataFrame (reusing the same per-upgrade
+download/caching as `process_metadata()`). Every row already has an `upgrade` id column and an `in.upgrade_name`
+column, so you can group by `bldg_id` to compare a building's results (energy consumption, savings, etc.) across
+packages. If `upgrades` is omitted, every upgrade available for the release is downloaded and combined.
+
+```python
+# Compare Delaware small offices under the baseline vs. a heat pump RTU package
+processor = ComStockProcessor(
+    state="DE", county_name="All", building_type="SmallOffice", upgrade="0", base_dir=base_dir
+)
+combined_df = processor.process_metadata_for_upgrades(save_dir=base_dir, upgrades=["0", "1"])
+
+# One row per building per package, ready to compare
+combined_df.groupby("bldg_id").apply(
+    lambda g: g.set_index("upgrade")["out.site_energy.total.energy_consumption..kwh"]
+)
+```
+
+> **Note:** A building can appear more than once per upgrade in the "full" metadata (it may be reused to
+> represent multiple census tracts, each with its own `weight`). If you only need each building's simulated
+> performance, group/filter by `bldg_id` and `upgrade` and take the first row of each group.
+
+#### Comparing measure packages *across releases*
+
+Because upgrade ids aren't stable between releases, ComStock also publishes a `measure_name_crosswalk.csv` that
+maps a stable `measure_id` (e.g. `"hvac_0005"`) to the upgrade id/name used for that measure in each release.
+
+- **`get_measure_crosswalk(save_dir: Path) -> pd.DataFrame`** — downloads (and caches) the crosswalk table for
+  the configured release. A release's crosswalk only covers itself and *earlier* releases, so `release_3`
+  (the newest) has the most complete crosswalk, covering all three currently-supported releases.
+- **`find_upgrade_id(save_dir: Path, measure_id: str, target_release: str | None = None) -> str | None`** —
+  looks up the upgrade id for a stable `measure_id` in a specific release (defaults to the processor's own
+  release). Returns `None` if that measure wasn't included in the target release, and raises a `ValueError` if
+  the target release isn't covered by the currently loaded crosswalk.
+
+```python
+processor = ComStockProcessor(
+    state="DE", county_name="All", building_type="All", upgrade="0", base_dir=base_dir, release="release_3"
+)
+
+# "Heat Pump RTU" happens to be upgrade "1" in every currently-supported release, but that's not
+# guaranteed for every measure -- use find_upgrade_id() rather than hardcoding ids across releases.
+upgrade_id_r3 = processor.find_upgrade_id(save_dir=base_dir, measure_id="hvac_0005")               # "1"
+upgrade_id_r1 = processor.find_upgrade_id(save_dir=base_dir, measure_id="hvac_0005", target_release="release_1")  # "1"
+```
+
 ### Usage Example
 
 ```python
