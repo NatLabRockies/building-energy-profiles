@@ -28,7 +28,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, validate_release
+from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, scope_label, sqft_label, validate_release
 
 # The ResStock housing-type categories used in `in.geometry_building_type_recs`. Filtering on one of the
 # "Multi-Family" values selects dwelling units within multifamily buildings (not whole buildings -- see the
@@ -57,26 +57,31 @@ class ResStockProcessor(BuildingStockProcessor):
     def __init__(
         self,
         state: str,
-        county_name: str,
+        county_name: str | list[str],
         building_type: str,
         upgrade: str,
         base_dir: Path,
         release: str = DEFAULT_RELEASE,
+        min_sqft: float | None = None,
+        max_sqft: float | None = None,
     ) -> None:
         """ResStockProcessor helps users download metadata and time series data from the ResStock dataset.
 
         Args:
             state (str): 2-letter state abbreviation, or "All"
-            county_name (str): county name *without* the state prefix (e.g. "Kent County", not
-                "DE, Kent County" like ComStock), or "All". Note that ResStock metadata is only
-                partitioned by state, so specifying a county doesn't reduce how much is downloaded -- it's
-                filtered locally after downloading the state's file(s).
+            county_name (str | list[str]): county name *without* the state prefix (e.g. "Kent County", not
+                "DE, Kent County" like ComStock), "All", or a list of county names (e.g. to query a metro
+                area spanning several counties without over-fetching an entire state). Note that ResStock
+                metadata is only partitioned by state, so specifying a county doesn't reduce how much is
+                downloaded -- it's filtered locally after downloading the state's file(s).
             building_type (str): one of RESSTOCK_BUILDING_TYPES (e.g. "Multi-Family with 5+ Units" for
                 multifamily buildings), or "All"
             upgrade (str): upgrade identifier from ResStock, e.g., "0" = baseline
             base_dir (Path): directory to save the downloaded ResStock files
             release (str): which ResStock release to use. Must be one of SUPPORTED_RELEASES.
                 Defaults to DEFAULT_RELEASE (the most recent supported release).
+            min_sqft (float | None): if set, only include dwelling units with at least this square footage
+            max_sqft (float | None): if set, only include dwelling units with at most this square footage
         """
         validate_release(release, SUPPORTED_RELEASES, "ResStock")
         if building_type != "All" and building_type not in RESSTOCK_BUILDING_TYPES:
@@ -89,6 +94,8 @@ class ResStockProcessor(BuildingStockProcessor):
         self.upgrade = upgrade
         self.base_dir = base_dir
         self.release = release
+        self.min_sqft = min_sqft
+        self.max_sqft = max_sqft
 
         if not self.base_dir.exists():
             self.base_dir.mkdir()
@@ -150,7 +157,8 @@ class ResStockProcessor(BuildingStockProcessor):
 
         combo_label = "all" if set(upgrades) == set(all_upgrades) else "-".join(sorted(upgrades))
         output_csv = (
-            save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-upgrades_{combo_label}-selected_metadata.csv"
+            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-upgrades_{combo_label}-selected_metadata.csv"
         )
         if output_csv.exists():
             print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
@@ -169,7 +177,10 @@ class ResStockProcessor(BuildingStockProcessor):
         This is the shared implementation behind `process_metadata()` (which always uses `self.upgrade`)
         and `process_metadata_for_upgrades()` (which calls this once per requested upgrade).
         """
-        output_csv = save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-{upgrade}-selected_metadata.csv"
+        output_csv = (
+            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade}-selected_metadata.csv"
+        )
         if output_csv.exists():
             print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
             return pd.read_csv(output_csv)
@@ -207,10 +218,13 @@ class ResStockProcessor(BuildingStockProcessor):
             meta_df = pd.concat((pd.read_parquet(path) for path in partition_files), ignore_index=True)
 
             if self.county_name != "All":
-                meta_df = meta_df[meta_df["in.county_name"] == self.county_name]
+                counties = [self.county_name] if isinstance(self.county_name, str) else self.county_name
+                meta_df = meta_df[meta_df["in.county_name"].isin(counties)]
 
             if self.building_type != "All":
                 meta_df = meta_df[meta_df["in.geometry_building_type_recs"] == self.building_type]
+
+            meta_df = self._apply_sqft_filter(meta_df)
 
             meta_df = meta_df.reset_index(drop=True)
 

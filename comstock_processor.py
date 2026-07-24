@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, validate_release
+from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, scope_label, sqft_label, validate_release
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
 # this writing, under the 2025 directory of the OEDI data lake using the same
@@ -36,22 +36,28 @@ class ComStockProcessor(BuildingStockProcessor):
     def __init__(
         self,
         state: str,
-        county_name: str,
+        county_name: str | list[str],
         building_type: str,
         upgrade: str,
         base_dir: Path,
         release: str = DEFAULT_RELEASE,
+        min_sqft: float | None = None,
+        max_sqft: float | None = None,
     ) -> None:
         """ComStockProcess class helps users download metadata and time series data from the ComStock dataset.
 
         Args:
             state (str): 2-letter state abbreviation
-            county_name (str): name of the county
+            county_name (str | list[str]): name of the county, "All", or a list of county names (e.g. to
+                query a metro area spanning several counties, like the Denver area's Denver, Arapahoe,
+                Jefferson, Adams, Douglas, and Broomfield counties) without over-fetching an entire state
             building_type (str): type of building
             upgrade (str): upgrade identifier from ComStock, e.g., 0 = baseline
             base_dir (Path): directory to save the downloaded ComStock files
             release (str): which ComStock release to use. Must be one of SUPPORTED_RELEASES.
                 Defaults to DEFAULT_RELEASE (the most recent supported release).
+            min_sqft (float | None): if set, only include buildings with at least this square footage
+            max_sqft (float | None): if set, only include buildings with at most this square footage
         """
         validate_release(release, SUPPORTED_RELEASES, "ComStock")
 
@@ -61,6 +67,8 @@ class ComStockProcessor(BuildingStockProcessor):
         self.upgrade = upgrade
         self.base_dir = base_dir
         self.release = release
+        self.min_sqft = min_sqft
+        self.max_sqft = max_sqft
 
         if not self.base_dir.exists():
             self.base_dir.mkdir()
@@ -97,10 +105,14 @@ class ComStockProcessor(BuildingStockProcessor):
         partition, e.g. state=DE/county=G1000010/DE_G1000010_upgrade0.parquet. This method discovers the
         relevant partitions for the class's state (or every available state, if state="All"), downloads
         them in parallel (skipping any partition files already cached on disk), concatenates them, and
-        filters by county name and building type to match the class's constraints. Note that requesting a
-        specific county_name does not reduce how many partitions are downloaded (there's no local mapping
-        from county name to its FIPS-style folder), and state="All" downloads every state's/county's
-        partition for the given upgrade, which can be a large number of files.
+        filters by county name, building type, and square footage (if `min_sqft`/`max_sqft` were set) to
+        match the class's constraints -- e.g. to find "all office buildings under 10,000 sqft in the Denver
+        area" pass county_name=["Denver County", "Arapahoe County", ...], building_type="SmallOffice" (or
+        similar), and max_sqft=10000. Note that requesting a specific county_name does not reduce how many
+        partitions are downloaded (there's no local mapping from county name to its FIPS-style folder), and
+        state="All" downloads every state's/county's partition for the given upgrade, which can be a large
+        number of files. The resulting DataFrame's `bldg_id`/`in.state` columns can be passed directly to
+        `process_building_time_series()` to download time series only for the matching buildings.
 
         Args:
             save_dir (Path): path to save the metadata
@@ -141,7 +153,8 @@ class ComStockProcessor(BuildingStockProcessor):
 
         combo_label = "all" if set(upgrades) == set(all_upgrades) else "-".join(sorted(upgrades))
         output_csv = (
-            save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-upgrades_{combo_label}-selected_metadata.csv"
+            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-upgrades_{combo_label}-selected_metadata.csv"
         )
         if output_csv.exists():
             print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
@@ -161,7 +174,10 @@ class ComStockProcessor(BuildingStockProcessor):
         and `process_metadata_for_upgrades()` (which calls this once per requested upgrade).
         """
         # check if the csv already exists, don't create it again if so, but give a warning
-        output_csv = save_dir / f"{self.release}-{self.state}-{self.county_name}-{self.building_type}-{upgrade}-selected_metadata.csv"
+        output_csv = (
+            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade}-selected_metadata.csv"
+        )
         if output_csv.exists():
             print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
             return pd.read_csv(output_csv)
@@ -207,10 +223,14 @@ class ComStockProcessor(BuildingStockProcessor):
             meta_df = pd.concat((pd.read_parquet(path) for path in partition_files), ignore_index=True)
 
             if self.county_name != "All" and self.state != "All":
-                meta_df = meta_df[meta_df["in.county_name"] == f"{self.state}, {self.county_name}"]
+                counties = [self.county_name] if isinstance(self.county_name, str) else self.county_name
+                wanted_county_names = {f"{self.state}, {county}" for county in counties}
+                meta_df = meta_df[meta_df["in.county_name"].isin(wanted_county_names)]
 
             if self.building_type != "All":
                 meta_df = meta_df[meta_df["in.comstock_building_type"] == self.building_type]
+
+            meta_df = self._apply_sqft_filter(meta_df)
 
             meta_df = meta_df.reset_index(drop=True)
 

@@ -24,11 +24,13 @@ from lib.comstock_processor import ComStockProcessor
 # Initialize the processor
 processor = ComStockProcessor(
     state="CA",           # 2-letter state abbreviation
-    county_name="All",    # County name or "All"
+    county_name="All",    # County name, a list of county names, or "All" (see "Searching for Buildings" below)
     building_type="All",  # Building type or "All"
     upgrade="0",          # Upgrade identifier (0 = baseline)
     base_dir=Path("./datasets/comstock"),  # Local directory to save data
     release="release_3",  # Optional: which ComStock release to use (see "Supported Releases" below)
+    min_sqft=None,        # Optional: only include buildings at least this large
+    max_sqft=None,        # Optional: only include buildings at most this large
 )
 ```
 
@@ -71,6 +73,40 @@ Downloads time series data for buildings specified in the input DataFrame using 
 - Skips downloading files that already exist locally
 - Downloads from the ComStock AWS S3 bucket
 - Returns paths and building IDs of downloaded files
+
+### Searching for Buildings, Then Downloading Their Time Series
+
+`process_metadata()`'s constraints (`county_name`, `building_type`, `min_sqft`/`max_sqft`) act as a search: find
+the buildings matching some criteria, then pass the resulting DataFrame straight to
+`process_building_time_series()` to download time series data only for those buildings.
+
+- **`county_name`** accepts a single county, `"All"`, or a **list of counties**, which is useful for querying a
+  metro area that spans several counties (a single `state`/county partition can't represent that on its own).
+- **`min_sqft`/`max_sqft`** filter by building square footage (`in.sqft..ft2`).
+
+```python
+# All office buildings under 10,000 sqft in the Denver metro area
+processor = ComStockProcessor(
+    state="CO",
+    county_name=["Denver County", "Arapahoe County", "Jefferson County", "Adams County", "Douglas County", "Broomfield County"],
+    building_type="SmallOffice",
+    upgrade="0",
+    base_dir=base_dir,
+    max_sqft=10_000,
+)
+matching_buildings = processor.process_metadata(save_dir=base_dir)
+
+# Download time series data only for the buildings that matched
+timeseries_dir = base_dir / "timeseries"
+timeseries_dir.mkdir(exist_ok=True)
+paths, building_ids = processor.process_building_time_series(matching_buildings, save_dir=timeseries_dir)
+```
+
+> **Note:** Since metadata is only partitioned by state and county (not building type or square footage),
+> `min_sqft`/`max_sqft` and requesting specific counties don't reduce how many partition files are downloaded --
+> they're applied locally, after downloading, the same way `building_type` already is. Cache filenames (the
+> `..._selected_metadata.csv` files) encode all of these filters, so different searches against the same
+> state/upgrade don't collide with each other's cached results.
 
 ### Comparing Buildings Across Measure Packages
 
@@ -204,7 +240,9 @@ metadata_df = processor.process_metadata(save_dir=processor.base_dir)
   `state=DE/DE_upgrade0.parquet`), not by state *and* county like ComStock. Specifying `county_name` doesn't
   reduce how much is downloaded (there's only one file per state/upgrade); it's filtered locally afterward.
 - **`county_name` format**: ResStock's `in.county_name` values don't include the state prefix ComStock uses
-  -- pass `"Kent County"`, not `"DE, Kent County"`.
+  -- pass `"Kent County"`, not `"DE, Kent County"`. Like ComStock, `county_name` also accepts a list of
+  counties for metro-area-style searches, and `min_sqft`/`max_sqft` filter by dwelling unit square footage --
+  see "Searching for Buildings, Then Downloading Their Time Series" above.
 - **`building_type` values**: use one of `RESSTOCK_BUILDING_TYPES` (ResStock's residential housing
   categories), not ComStock's commercial building types:
   - `Mobile Home`, `Single-Family Detached`, `Single-Family Attached`, `Multi-Family with 2 - 4 Units`,

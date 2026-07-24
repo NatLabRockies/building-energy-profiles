@@ -10,6 +10,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from building_stock_processor import scope_label, sqft_label
 from comstock_processor import DEFAULT_RELEASE, SUPPORTED_RELEASES, ComStockProcessor
 
 
@@ -107,8 +108,9 @@ class TestComStockProcessor:
         assert any(raw_dir.glob("DE-*-upgrade0.parquet"))
 
         expected_csv = (
-            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
-            f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
+            f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
+            f"{sample_processor.upgrade}-selected_metadata.csv"
         )
         assert expected_csv.exists()
 
@@ -155,8 +157,9 @@ class TestComStockProcessor:
         raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
         partition_files = list(raw_dir.glob("DE-*-upgrade0.parquet"))
         csv_file = (
-            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{sample_processor.county_name}-"
-            f"{sample_processor.building_type}-{sample_processor.upgrade}-selected_metadata.csv"
+            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
+            f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
+            f"{sample_processor.upgrade}-selected_metadata.csv"
         )
 
         assert partition_files
@@ -422,3 +425,85 @@ class TestComStockProcessor:
         called_upgrades = {call.args[1] for call in mock_download.call_args_list}
         assert called_upgrades == {"0", "1"}
         assert sorted(combined_df["upgrade"].tolist()) == [0, 1]
+
+    @pytest.mark.integration
+    def test_multi_county_filter(self, test_data_dir):
+        """Test that a list of counties selects buildings from all of them (e.g. a metro area query)."""
+        processor = ComStockProcessor(
+            state="DE",
+            county_name=["Kent County", "Sussex County"],
+            building_type="SmallOffice",
+            upgrade="0",
+            base_dir=test_data_dir,
+        )
+
+        metadata_df = processor.process_metadata(save_dir=test_data_dir)
+
+        assert len(metadata_df) > 0
+        assert set(metadata_df["in.county_name"].unique()) == {"DE, Kent County", "DE, Sussex County"}
+
+    @pytest.mark.integration
+    def test_sqft_filter(self, test_data_dir):
+        """Test that min_sqft/max_sqft narrow results to the requested building size range."""
+        processor = ComStockProcessor(
+            state="DE",
+            county_name="All",
+            building_type="SmallOffice",
+            upgrade="0",
+            base_dir=test_data_dir,
+            min_sqft=1000,
+            max_sqft=10000,
+        )
+
+        metadata_df = processor.process_metadata(save_dir=test_data_dir)
+
+        assert len(metadata_df) > 0
+        assert metadata_df["in.sqft..ft2"].min() >= 1000
+        assert metadata_df["in.sqft..ft2"].max() <= 10000
+
+    @pytest.mark.integration
+    def test_search_then_download_time_series(self, test_data_dir):
+        """Test the "find a set of buildings, then download their time series" workflow end to end."""
+        processor = ComStockProcessor(
+            state="DE",
+            county_name=["Kent County", "Sussex County"],
+            building_type="SmallOffice",
+            upgrade="0",
+            base_dir=test_data_dir,
+            max_sqft=10000,
+        )
+
+        matching_buildings = processor.process_metadata(save_dir=test_data_dir)
+        assert len(matching_buildings) > 0
+
+        small_sample = matching_buildings.head(2)
+        timeseries_dir = test_data_dir / "search_time_series_data"
+        timeseries_dir.mkdir(exist_ok=True)
+
+        paths, building_ids = processor.process_building_time_series(small_sample, save_dir=timeseries_dir)
+
+        assert len(paths) == len(small_sample)
+        assert len(building_ids) == len(small_sample)
+        for path in paths:
+            assert Path(path).exists()
+            assert Path(path).stat().st_size > 0
+
+    @pytest.mark.unit
+    def test_different_filter_scopes_use_different_cache_files(self, tmp_path):
+        """Test that different county/sqft filter combos don't collide on the same cache filename."""
+        base_processor = ComStockProcessor(state="DE", county_name="All", building_type="SmallOffice", upgrade="0", base_dir=tmp_path)
+        multi_county_processor = ComStockProcessor(
+            state="DE", county_name=["Kent County", "Sussex County"], building_type="SmallOffice", upgrade="0", base_dir=tmp_path
+        )
+        sqft_processor = ComStockProcessor(
+            state="DE", county_name="All", building_type="SmallOffice", upgrade="0", base_dir=tmp_path, max_sqft=10000
+        )
+
+        def cache_filename(processor: ComStockProcessor) -> str:
+            return (
+                f"{processor.release}-{processor.state}-{scope_label(processor.county_name)}-{processor.building_type}-"
+                f"{sqft_label(processor.min_sqft, processor.max_sqft)}-{processor.upgrade}-selected_metadata.csv"
+            )
+
+        filenames = {cache_filename(base_processor), cache_filename(multi_county_processor), cache_filename(sqft_processor)}
+        assert len(filenames) == 3
