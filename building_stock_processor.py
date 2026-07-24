@@ -44,6 +44,28 @@ def validate_release(release: str, supported_releases: dict[str, BuildingStockRe
         raise ValueError(f"Unsupported {product} release '{release}'. Supported releases are: {supported}.")
 
 
+def scope_label(value: str | list[str]) -> str:
+    """Build a filesystem-safe label describing a "county_name"-style filter, for use in cache filenames.
+
+    Returns the "All" sentinel or a single county name as-is, or a sorted, "+"-joined list of names when
+    multiple counties are requested (e.g. to query a metro area spanning several counties).
+    """
+    if value == "All" or isinstance(value, str):
+        return value
+    return "+".join(sorted(value))
+
+
+def sqft_label(min_sqft: float | None, max_sqft: float | None) -> str:
+    """Build a filesystem-safe label describing an optional square footage range, for use in cache
+    filenames. Returns "All" if neither bound is set.
+    """
+    if min_sqft is None and max_sqft is None:
+        return "All"
+    lo = "0" if min_sqft is None else str(min_sqft)
+    hi = "max" if max_sqft is None else str(max_sqft)
+    return f"{lo}-{hi}sqft"
+
+
 class BuildingStockProcessor:
     """Shared base class for ComStockProcessor and ResStockProcessor.
 
@@ -68,6 +90,9 @@ class BuildingStockProcessor:
     time_series_url: str
     release: str
     upgrade: str
+    county_name: str | list[str]
+    min_sqft: float | None
+    max_sqft: float | None
     _metadata_key_prefix: str
 
     def download_file(self, url: str, save_path: Path) -> None:
@@ -121,6 +146,16 @@ class BuildingStockProcessor:
         """Return the state abbreviations that have published metadata for this release."""
         prefixes = self._list_common_prefixes(self._metadata_key_prefix)
         return [name.split("=", 1)[1] for name in prefixes if name.startswith("state=")]
+
+    def _apply_sqft_filter(self, meta_df: pd.DataFrame) -> pd.DataFrame:
+        """Filter a metadata DataFrame by `self.min_sqft`/`self.max_sqft` (either or both may be None),
+        using the `in.sqft..ft2` column shared by ComStock and ResStock metadata.
+        """
+        if self.min_sqft is not None:
+            meta_df = meta_df[meta_df["in.sqft..ft2"] >= self.min_sqft]
+        if self.max_sqft is not None:
+            meta_df = meta_df[meta_df["in.sqft..ft2"] <= self.max_sqft]
+        return meta_df
 
     def list_upgrades(self, save_dir: Path) -> dict[str, str]:
         """Download (if needed) and return the upgrade package lookup for this release.
