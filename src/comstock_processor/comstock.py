@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from buildstock_processor import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
+from ._base import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
 # this writing, under the 2025 directory of the OEDI data lake using the same

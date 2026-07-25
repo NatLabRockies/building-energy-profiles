@@ -1,3 +1,7 @@
+[build-system]
+requires = ["uv_build>=0.11.31,<0.12.0"]
+build-backend = "uv_build"
+
 [project]
 name = "comstock-processor"
 version = "0.1.0"
@@ -32,14 +36,12 @@ dev = [
 ]
 
 [tool.uv]
-package = false
+package = true
 
 [tool.mypy]
 python_version = "3.12"
 files = [
-    "buildstock_processor.py",
-    "comstock_processor.py",
-    "resstock_processor.py",
+    "src/comstock_processor/",
     "tests/",
 ]
 ignore_missing_imports = true

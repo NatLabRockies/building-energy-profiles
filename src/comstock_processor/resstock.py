@@ -28,7 +28,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from buildstock_processor import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
+from ._base import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
 
 # The ResStock housing-type categories used in `in.geometry_building_type_recs`. Filtering on one of the
 # "Multi-Family" values selects dwelling units within multifamily buildings (not whole buildings -- see the

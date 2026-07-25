@@ -7,7 +7,7 @@ build cache filenames and validate release identifiers.
 
 import pytest
 
-from buildstock_processor import BuildStockRelease, scope_label, sqft_label, validate_release
+from comstock_processor._base import BuildStockRelease, scope_label, sqft_label, validate_release
 
 
 class TestScopeLabel:
