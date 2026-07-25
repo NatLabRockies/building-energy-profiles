@@ -14,7 +14,7 @@ import pandas as pd
 import requests
 from tqdm import tqdm
 
-from building_stock_processor import BuildingStockProcessor, BuildingStockRelease, scope_label, sqft_label, validate_release
+from buildstock_processor import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
 # this writing, under the 2025 directory of the OEDI data lake using the same
@@ -23,16 +23,16 @@ from building_stock_processor import BuildingStockProcessor, BuildingStockReleas
 #
 # When NREL publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
 # default) and drop the oldest entry to keep this rolling window at three supported releases.
-SUPPORTED_RELEASES: dict[str, BuildingStockRelease] = {
-    "release_1": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
-    "release_2": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_2", label="ComStock AMY2018 Release 2"),
-    "release_3": BuildingStockRelease(year="2025", folder="comstock_amy2018_release_3", label="ComStock AMY2018 Release 3"),
+SUPPORTED_RELEASES: dict[str, BuildStockRelease] = {
+    "release_1": BuildStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
+    "release_2": BuildStockRelease(year="2025", folder="comstock_amy2018_release_2", label="ComStock AMY2018 Release 2"),
+    "release_3": BuildStockRelease(year="2025", folder="comstock_amy2018_release_3", label="ComStock AMY2018 Release 3"),
 }
 
 DEFAULT_RELEASE = "release_3"
 
 
-class ComStockProcessor(BuildingStockProcessor):
+class ComStockProcessor(BuildStockProcessor):
     def __init__(
         self,
         state: str,

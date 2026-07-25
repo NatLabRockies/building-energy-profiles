@@ -1,5 +1,5 @@
 """
-Unit tests for shared BuildingStockProcessor utility functions (scope_label, sqft_label, validate_release).
+Unit tests for shared BuildStockProcessor utility functions (scope_label, sqft_label, validate_release).
 
 These are pure functions with no network calls, used by both ComStockProcessor and ResStockProcessor to
 build cache filenames and validate release identifiers.
@@ -7,7 +7,7 @@ build cache filenames and validate release identifiers.
 
 import pytest
 
-from building_stock_processor import BuildingStockRelease, scope_label, sqft_label, validate_release
+from buildstock_processor import BuildStockRelease, scope_label, sqft_label, validate_release
 
 
 class TestScopeLabel:
@@ -62,11 +62,11 @@ class TestValidateRelease:
 
     @pytest.mark.unit
     def test_supported_release_does_not_raise(self):
-        releases = {"release_1": BuildingStockRelease(year="2025", folder="foo_release_1", label="Foo Release 1")}
+        releases = {"release_1": BuildStockRelease(year="2025", folder="foo_release_1", label="Foo Release 1")}
         validate_release("release_1", releases, "Foo")  # should not raise
 
     @pytest.mark.unit
     def test_unsupported_release_raises_with_product_name(self):
-        releases = {"release_1": BuildingStockRelease(year="2025", folder="foo_release_1", label="Foo Release 1")}
+        releases = {"release_1": BuildStockRelease(year="2025", folder="foo_release_1", label="Foo Release 1")}
         with pytest.raises(ValueError, match="Unsupported Foo release 'release_99'"):
             validate_release("release_99", releases, "Foo")
