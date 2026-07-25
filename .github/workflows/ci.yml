@@ -61,7 +61,6 @@ jobs:
         timeout-minutes: 15
         env:
           BUILDSTOCK_DATA_DIR: ${{ runner.temp }}/dc-stock-analysis
-          MPLBACKEND: Agg
         run: >-
           uv run jupyter nbconvert --to html --execute
           02_washington_dc_stock_analysis.ipynb
