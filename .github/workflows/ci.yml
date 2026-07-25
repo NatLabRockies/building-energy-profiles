@@ -56,3 +56,19 @@ jobs:
         with:
           name: notebook-html-${{ github.run_id }}
           path: test_output-${{ github.run_id }}.html
+      - name: Run Washington DC notebook integration test
+        if: ${{ matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest' }}
+        timeout-minutes: 15
+        env:
+          BUILDSTOCK_DATA_DIR: ${{ runner.temp }}/dc-stock-analysis
+          MPLBACKEND: Agg
+        run: >-
+          uv run jupyter nbconvert --to html --execute
+          02_washington_dc_stock_analysis.ipynb
+          --output dc-stock-analysis-${{ github.run_id }}.html
+      - name: Upload Washington DC notebook artifact
+        if: ${{ matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest' }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: dc-stock-analysis-${{ github.run_id }}
+          path: dc-stock-analysis-${{ github.run_id }}.html
