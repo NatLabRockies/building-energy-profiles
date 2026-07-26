@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide covers the common workflows supported by `comstock_processor`. For assumptions and known constraints,
+This guide covers the common workflows supported by `buildstock_processor`. For assumptions and known constraints,
 read [Data Model and Limitations](limitations.md).
 
 ## Install from the Repository
@@ -41,7 +41,7 @@ ComStock records are commercial whole buildings. The example below searches a gr
 building-type and floor-area filters.
 
 ```python
-from comstock_processor import ComStockProcessor
+from buildstock_processor import ComStockProcessor
 
 comstock_processor = ComStockProcessor(
     state="CO",
@@ -79,7 +79,7 @@ ResStock records are residential dwelling units. A multifamily result is one sam
 its containing building.
 
 ```python
-from comstock_processor import ResStockProcessor
+from buildstock_processor import ResStockProcessor
 
 resstock_processor = ResStockProcessor(
     state="DC",

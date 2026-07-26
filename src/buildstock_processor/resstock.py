@@ -21,14 +21,11 @@ building.
 @author: nllong
 """
 
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pandas as pd
-import requests
-from tqdm import tqdm
 
-from ._base import BuildStockProcessor, BuildStockRelease, scope_label, sqft_label, validate_release
+from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition, validate_release
 
 # The ResStock housing-type categories used in `in.geometry_building_type_recs`. Filtering on one of the
 # "Multi-Family" values selects dwelling units within multifamily buildings (not whole buildings -- see the
@@ -54,6 +51,8 @@ DEFAULT_RELEASE = "release_1"
 
 
 class ResStockProcessor(BuildStockProcessor):
+    product_name = "ResStock"
+
     def __init__(
         self,
         state: str,
@@ -118,118 +117,23 @@ class ResStockProcessor(BuildStockProcessor):
         self.metadata_url = f"https://{self.BUCKET}.s3.amazonaws.com/{self._metadata_key_prefix.rstrip('/')}"
         self.time_series_url = self.base_url + "timeseries_individual_buildings"
 
-    def process_metadata(self, save_dir: Path) -> pd.DataFrame:
-        """Download (if needed) and process the ResStock metadata for the configured release and upgrade.
-
-        ResStock metadata is published per state/upgrade partition (e.g. state=DE/DE_upgrade0.parquet).
-        This method discovers the relevant partitions for the class's state (or every available state, if
-        state="All"), downloads them in parallel (skipping any partition files already cached on disk),
-        concatenates them, and filters by county name and building type (one of RESSTOCK_BUILDING_TYPES,
-        e.g. "Multi-Family with 5+ Units" for multifamily buildings) to match the class's constraints.
-
-        Args:
-            save_dir (Path): path to save the metadata
-
-        Returns:
-            DataFrame: the resulting metadata filtered by the class's constraints.
-        """
-        return self._download_metadata_for_upgrade(save_dir, self.upgrade)
-
-    def process_metadata_for_upgrades(self, save_dir: Path, upgrades: list[str] | None = None) -> pd.DataFrame:
-        """Download and combine metadata/annual-results for multiple upgrade packages, to compare buildings
-        (dwelling units) across packages.
-
-        See `ComStockProcessor.process_metadata_for_upgrades()` for the general idea -- every partition
-        already includes `upgrade` and `in.upgrade_name` columns, so grouping the combined result by
-        `bldg_id` lets you compare a unit's simulated results across packages.
-
-        Args:
-            save_dir (Path): path to save the metadata
-            upgrades (list[str] | None): the upgrade ids to download and combine. Defaults to every
-                upgrade available for this release (from `list_upgrades()`).
-
-        Returns:
-            DataFrame: the combined, filtered metadata for all requested upgrades.
-        """
-        all_upgrades = list(self.list_upgrades(save_dir))
-        if upgrades is None:
-            upgrades = all_upgrades
-
-        combo_label = "all" if set(upgrades) == set(all_upgrades) else "-".join(sorted(upgrades))
-        output_csv = (
-            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
-            f"{sqft_label(self.min_sqft, self.max_sqft)}-upgrades_{combo_label}-selected_metadata.csv"
-        )
-        if output_csv.exists():
-            print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
-            return pd.read_csv(output_csv)
-
-        frames = [self._download_metadata_for_upgrade(save_dir, upgrade) for upgrade in upgrades]
-        combined_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
-
-        combined_df.to_csv(output_csv, index=False)
-
-        return combined_df
-
-    def _download_metadata_for_upgrade(self, save_dir: Path, upgrade: str) -> pd.DataFrame:
-        """Download (if needed) and filter the ResStock metadata for a single upgrade package.
-
-        This is the shared implementation behind `process_metadata()` (which always uses `self.upgrade`)
-        and `process_metadata_for_upgrades()` (which calls this once per requested upgrade).
-        """
-        output_csv = (
-            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
-            f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade}-selected_metadata.csv"
-        )
-        if output_csv.exists():
-            print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
-            return pd.read_csv(output_csv)
-
+    def _metadata_partitions(self) -> list[MetadataPartition]:
         states = self._available_states() if self.state == "All" else [self.state]
+        return [MetadataPartition(state=state) for state in states]
 
-        raw_dir = save_dir / "raw_metadata" / self.release
-        raw_dir.mkdir(parents=True, exist_ok=True)
+    def _metadata_partition_cache_name(self, partition: MetadataPartition, upgrade: str) -> str:
+        return f"{partition.state}-upgrade{upgrade}.parquet"
 
-        def download_partition(state: str) -> Path | None:
-            save_path = raw_dir / f"{state}-upgrade{upgrade}.parquet"
-            if not save_path.exists():
-                partition_url = f"{self.metadata_url}/state={state}/{state}_upgrade{upgrade}.parquet"
-                try:
-                    self.download_file(partition_url, save_path)
-                except requests.RequestException:
-                    tqdm.write(f"Failed to download metadata partition: {partition_url}")
-                    return None
+    def _metadata_partition_url(self, partition: MetadataPartition, upgrade: str) -> str:
+        return f"{self.metadata_url}/state={partition.state}/{partition.state}_upgrade{upgrade}.parquet"
 
-            return save_path if save_path.exists() else None
+    def _filter_metadata(self, meta_df: pd.DataFrame) -> pd.DataFrame:
+        if self.county_name != "All":
+            counties = [self.county_name] if isinstance(self.county_name, str) else self.county_name
+            meta_df = meta_df[meta_df["in.county_name"].isin(counties)]
 
-        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
-            downloaded = list(
-                tqdm(
-                    executor.map(download_partition, states),
-                    total=len(states),
-                    desc=f"Downloading metadata partitions (upgrade {upgrade})",
-                )
-            )
-
-        partition_files = [path for path in downloaded if path is not None]
-        if not partition_files:
-            meta_df = pd.DataFrame()
-        else:
-            meta_df = pd.concat((pd.read_parquet(path) for path in partition_files), ignore_index=True)
-
-            if self.county_name != "All":
-                counties = [self.county_name] if isinstance(self.county_name, str) else self.county_name
-                meta_df = meta_df[meta_df["in.county_name"].isin(counties)]
-
-            if self.building_type != "All":
-                meta_df = meta_df[meta_df["in.geometry_building_type_recs"] == self.building_type]
-
-            meta_df = self._apply_sqft_filter(meta_df)
-
-            meta_df = meta_df.reset_index(drop=True)
-
-        meta_df.to_csv(output_csv, index=False)
-
+        if self.building_type != "All":
+            meta_df = meta_df[meta_df["in.geometry_building_type_recs"] == self.building_type]
         return meta_df
 
     def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:

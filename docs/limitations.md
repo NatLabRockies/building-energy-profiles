@@ -13,8 +13,8 @@ The code supports only the explicitly registered layouts:
 | ResStock AMY2018 | `release_1` | `release_1` |
 
 New OEDI releases are not automatically compatible. Directory layouts, columns, upgrade IDs, and crosswalk files
-can change. Add and test a release in `src/comstock_processor/comstock.py` or
-`src/comstock_processor/resstock.py` before using it.
+can change. Add and test a release in `src/buildstock_processor/comstock.py` or
+`src/buildstock_processor/resstock.py` before using it.
 
 ## ComStock and ResStock Records Mean Different Things
 

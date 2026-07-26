@@ -3,7 +3,7 @@ requires = ["uv_build>=0.11.31,<0.12.0"]
 build-backend = "uv_build"
 
 [project]
-name = "comstock-processor"
+name = "buildstock-processor"
 version = "0.1.0"
 description = "Download and analyze NREL ComStock and ResStock data."
 readme = "README.md"
@@ -50,7 +50,7 @@ source-include = [
 [tool.mypy]
 python_version = "3.12"
 files = [
-    "src/comstock_processor/",
+    "src/buildstock_processor/",
     "tests/",
 ]
 ignore_missing_imports = true

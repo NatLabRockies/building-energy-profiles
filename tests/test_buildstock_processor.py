@@ -7,7 +7,8 @@ build cache filenames and validate release identifiers.
 
 import pytest
 
-from comstock_processor._base import BuildStockRelease, scope_label, sqft_label, validate_release
+from buildstock_processor import BuildStockProcessor, ComStockProcessor, ResStockProcessor
+from buildstock_processor._base import BuildStockRelease, scope_label, sqft_label, validate_release
 
 
 class TestScopeLabel:
@@ -70,3 +71,28 @@ class TestValidateRelease:
         releases = {"release_1": BuildStockRelease(year="2025", folder="foo_release_1", label="Foo Release 1")}
         with pytest.raises(ValueError, match="Unsupported Foo release 'release_99'"):
             validate_release("release_99", releases, "Foo")
+
+
+class TestBuildStockProcessor:
+    """Test the shared processor contract."""
+
+    @pytest.mark.unit
+    def test_base_class_is_abstract(self):
+        with pytest.raises(TypeError, match="abstract"):
+            BuildStockProcessor()  # type: ignore[abstract]
+
+    @pytest.mark.unit
+    @pytest.mark.parametrize("processor_class", [ComStockProcessor, ResStockProcessor])
+    def test_concrete_processors_inherit_shared_metadata_workflows(self, processor_class):
+        assert processor_class.process_metadata is BuildStockProcessor.process_metadata
+        assert processor_class.process_metadata_for_upgrades is BuildStockProcessor.process_metadata_for_upgrades
+
+    @pytest.mark.unit
+    def test_empty_cached_metadata_is_an_empty_dataframe(self, tmp_path):
+        empty_csv = tmp_path / "empty.csv"
+        empty_csv.touch()
+
+        result = BuildStockProcessor._read_cached_metadata(empty_csv)
+
+        assert result.empty
+        assert list(result.columns) == []
