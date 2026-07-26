@@ -1,6 +1,15 @@
 # ComStock Processor
 
-A Python class to help download ComStock data locally for analysis. The `ComStockProcessor` class provides an easy interface to download metadata and time series data from the ComStock dataset hosted on AWS S3.
+A Python package for downloading and analyzing NREL ComStock and ResStock metadata, annual results, upgrade
+packages, and individual-building time series from the public OEDI data lake.
+
+The package exposes two processors:
+
+- `ComStockProcessor` for commercial whole-building records.
+- `ResStockProcessor` for residential dwelling-unit records.
+
+Both use shared download, cache, filtering, upgrade-lookup, and time-series infrastructure. They remain separate
+because their releases, metadata partitioning, building types, crosswalk formats, and record semantics differ.
 
 ## Installation
 
@@ -9,6 +18,63 @@ Install [uv](https://docs.astral.sh/uv/) and sync the project's dependencies:
 ```bash
 pip install uv
 uv sync --group dev
+```
+
+The project uses a standard `src/` package layout. `uv sync` installs `comstock_processor` into the project
+environment as an editable package.
+
+## Documentation
+
+- [Usage guide](docs/usage.md): installation, searches, time series, upgrades, weights, total-energy calculations,
+  and schema normalization.
+- [Data model and limitations](docs/limitations.md): releases, download scope, caching, duplicate records,
+  multifamily semantics, time-series differences, and network behavior.
+- [Basic ComStock notebook](01_data_sampling_example.ipynb).
+- [Washington, DC office and multifamily analysis](02_washington_dc_stock_analysis.ipynb), including gross floor
+  area, total site energy, stock multipliers, demand profiles, monthly end uses, and measure recommendations.
+
+## Quick Start
+
+```python
+from pathlib import Path
+
+from comstock_processor import ComStockProcessor, ResStockProcessor
+
+comstock_dir = Path("datasets/comstock")
+comstock_dir.mkdir(parents=True, exist_ok=True)
+
+offices = ComStockProcessor(
+    state="DC",
+    county_name="All",
+    building_type="SmallOffice",
+    upgrade="0",
+    base_dir=comstock_dir,
+).process_metadata(save_dir=comstock_dir)
+
+resstock_dir = Path("datasets/resstock")
+resstock_dir.mkdir(parents=True, exist_ok=True)
+
+multifamily_units = ResStockProcessor(
+    state="DC",
+    county_name="All",
+    building_type="Multi-Family with 5+ Units",
+    upgrade="0",
+    base_dir=resstock_dir,
+).process_metadata(save_dir=resstock_dir)
+```
+
+ComStock rows represent commercial buildings. ResStock rows represent independently sampled dwelling units,
+including units in multifamily buildings; they are not whole-building records. Read
+[Data model and limitations](docs/limitations.md) before combining or weighting the two stocks.
+
+## Package Layout
+
+```text
+src/comstock_processor/
+|-- __init__.py   # public ComStockProcessor and ResStockProcessor imports
+|-- _base.py      # shared internal download/cache infrastructure
+|-- comstock.py   # ComStock implementation and releases
+`-- resstock.py   # ResStock implementation and releases
 ```
 
 ## ComStockProcessor Class
@@ -289,8 +355,6 @@ values (residential, not commercial), described above.
 
 ## Development
 
-## Testing
-
 The processor includes comprehensive unit and integration tests validating both `ComStockProcessor`
 (`tests/test_comstock_processor.py`) and `ResStockProcessor` (`tests/test_resstock_processor.py`).
 
@@ -315,9 +379,16 @@ uv run pytest tests -v
 ### Test Categories
 
 - **Unit tests**: Fast tests that verify initialization and basic functionality
-- **Integration tests**: Tests that download and process real ComStock data. `test_all_state_filter`
+- **Integration tests**: Tests that download and process real ComStock and ResStock data. `test_all_state_filter`
   mocks state discovery down to a couple of small states so it can exercise the real `state="All"`
   code path without downloading every state's/county's metadata partition.
+
+Execute the notebooks as integration checks:
+
+```bash
+uv run jupyter nbconvert --to html --execute 01_data_sampling_example.ipynb
+uv run jupyter nbconvert --to html --execute 02_washington_dc_stock_analysis.ipynb
+```
 
 ### Committing
 

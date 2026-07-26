@@ -5,9 +5,11 @@ build-backend = "uv_build"
 [project]
 name = "comstock-processor"
 version = "0.1.0"
-description = "A tool to download and process ComStock data."
+description = "Download and analyze NREL ComStock and ResStock data."
+readme = "README.md"
 authors = [{ name = "Nicholas Long" }]
 license = "BSD-3-Clause"
+license-files = ["LICENSE.md"]
 requires-python = ">=3.12"
 dependencies = [
     "pandas>=3.0.5",
@@ -37,6 +39,13 @@ dev = [
 
 [tool.uv]
 package = true
+
+[tool.uv.build-backend]
+source-include = [
+    "docs/**",
+    "01_data_sampling_example.ipynb",
+    "02_washington_dc_stock_analysis.ipynb",
+]
 
 [tool.mypy]
 python_version = "3.12"
