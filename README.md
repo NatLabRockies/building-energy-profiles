@@ -69,6 +69,24 @@ ComStock rows represent commercial buildings. ResStock rows represent independen
 including units in multifamily buildings; they are not whole-building records. Read
 [Data model and limitations](docs/limitations.md) before combining or weighting the two stocks.
 
+## Data Dictionary
+
+The package includes a parseable data dictionary in [docs/data_dictionary.md](docs/data_dictionary.md) and `src/buildstock_processor/data_dictionary.json`. It covers building types, annual result variables with parsed units, and release-specific measure upgrade packages. The same data is available without downloads from the processor classes:
+
+```python
+from buildstock_processor import BuildStock, ComStockProcessor, ResStockProcessor
+
+BuildStock.building_types
+ComStockProcessor.building_types
+ComStockProcessor.data_dictionary.result_variables_by_unit("kwh")
+ComStockProcessor.data_dictionary.upgrade_packages("release_3")
+
+ResStockProcessor.building_types
+ResStockProcessor.data_dictionary.result_variable_names
+```
+
+Upgrade package ids are release-specific, so they are grouped by release in both the Markdown/JSON dictionary and the Python API.
+
 ## Package Layout
 
 ```text
@@ -118,6 +136,24 @@ If `release` is omitted, the most recent supported release is used. Passing an u
 listing the currently supported releases. The full set of supported releases and their on-disk locations are defined
 in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NREL publishes a new release, add it there and drop the
 oldest entry to keep a rolling window of three supported releases.
+
+### OEDI year and release paths
+
+Both processors use the same OEDI path convention: the publication year is the directory immediately below the
+building-stock prefix, and the dataset folder contains the weather year and release number. The currently supported
+paths are:
+
+| Dataset | OEDI path suffix |
+| --- | --- |
+| ComStock AMY2018 Release 1 | `2025/comstock_amy2018_release_1/` |
+| ComStock AMY2018 Release 2 | `2025/comstock_amy2018_release_2/` |
+| ComStock AMY2018 Release 3 | `2025/comstock_amy2018_release_3/` |
+| ResStock AMY2018 Release 1 | `2025/resstock_amy2018_release_1/` |
+| ResStock AMY2012 Release 1 | `2025/resstock_amy2012_release_1/` |
+
+The `release` argument remains the release identifier (`release_1`, `release_2`, or `release_3`); it is not the
+publication year. ResStock's `weather_year` selects the AMY2018 or AMY2012 dataset within the supported 2025
+release.
 
 ### Methods
 
@@ -299,15 +335,17 @@ processor = ResStockProcessor(
     building_type="Multi-Family with 5+ Units",  # see "Handling Multifamily Buildings" below
     upgrade="0",
     base_dir=Path("./datasets/resstock"),
+    release="release_1",
+    weather_year="amy2018",  # Optional; "amy2012" is also supported
 )
 metadata_df = processor.process_metadata(save_dir=processor.base_dir)
 ```
 
 ### Key differences from ComStockProcessor
 
-- **Metadata partitioning**: ResStock metadata is partitioned only by **state** (e.g.
-  `state=DE/DE_upgrade0.parquet`), not by state *and* county like ComStock. Specifying `county_name` doesn't
-  reduce how much is downloaded (there's only one file per state/upgrade); it's filtered locally afterward.
+- **Metadata partitioning**: ResStock metadata is partitioned only by **state**, not by state *and* county
+  like ComStock. Specifying `county_name` doesn't reduce how much is downloaded (there's only one file per
+  state/upgrade); it's filtered locally afterward.
 - **`county_name` format**: ResStock's `in.county_name` values don't include the state prefix ComStock uses
   -- pass `"Kent County"`, not `"DE, Kent County"`. Like ComStock, `county_name` also accepts a list of
   counties for metro-area-style searches, and `min_sqft`/`max_sqft` filter by dwelling unit square footage --
@@ -316,12 +354,14 @@ metadata_df = processor.process_metadata(save_dir=processor.base_dir)
   categories), not ComStock's commercial building types:
   - `Mobile Home`, `Single-Family Detached`, `Single-Family Attached`, `Multi-Family with 2 - 4 Units`,
     `Multi-Family with 5+ Units`
-- **Releases**: only `"release_1"` (the default) is currently supported. Unlike ComStock, ResStock hasn't
-  been fully remastered into a single consistent layout across multiple releases yet -- see
-  `SUPPORTED_RELEASES` in `src/buildstock_processor/resstock.py` for notes on adding more releases later.
-- **Measure crosswalk format**: `get_measure_crosswalk()` downloads an **Excel** file
-  (`measure_name_crosswalk_res_{year}_{release}.xlsx`), not a csv like ComStock (this is why
-  [`openpyxl`](https://openpyxl.readthedocs.io/) is a dependency).
+- **Releases and weather years**: `"release_1"` is the current supported 2025 ResStock release. Use
+  `weather_year="amy2018"` (the default) or `weather_year="amy2012"` to select the corresponding 2025
+  OEDI dataset.
+- **Measure crosswalk format**: for releases that publish a measure crosswalk, `get_measure_crosswalk()`
+  downloads an **Excel** file, not a csv like ComStock (this is why
+  [`openpyxl`](https://openpyxl.readthedocs.io/) is a dependency). The 2025 AMY2012 dataset does not publish
+  a separate measure crosswalk in OEDI; use `list_upgrades()` for its release- and weather-specific upgrade
+  package ids.
 
 ### Handling Multifamily Buildings
 
@@ -351,10 +391,9 @@ multifamily_units_df["weight"].sum()
 
 ### `process_metadata_for_upgrades`, `list_upgrades`, `get_measure_crosswalk`, `find_upgrade_id`
 
-`ResStockProcessor` supports the same measure-package comparison methods documented above for
-`ComStockProcessor` (`process_metadata_for_upgrades`, `list_upgrades`, `get_measure_crosswalk`,
-`find_upgrade_id`) -- the only difference is the crosswalk file format (xlsx, not csv) and building-type
-values (residential, not commercial), described above.
+`ResStockProcessor` supports `process_metadata_for_upgrades` and `list_upgrades` for every supported release.
+`get_measure_crosswalk` and `find_upgrade_id` are available only for ResStock releases that publish a measure
+crosswalk; currently that is 2025 `release_1` with `weather_year="amy2018"`.
 
 ## Development
 

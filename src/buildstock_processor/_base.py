@@ -192,9 +192,13 @@ class BuildStockProcessor(ABC):
     def find_upgrade_id(self, save_dir: Path, measure_id: str, target_release: str | None = None) -> str | None:
         """Resolve a stable measure ID to a dataset- and release-specific upgrade ID."""
 
+    def _cache_release_label(self) -> str:
+        """Return the release-like label to use in local cache paths."""
+        return self.release
+
     def _selected_metadata_path(self, save_dir: Path, upgrade_label: str) -> Path:
         return (
-            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            save_dir / f"{self._cache_release_label()}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
             f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade_label}-selected_metadata.csv"
         )
 
@@ -233,7 +237,7 @@ class BuildStockProcessor(ABC):
             return self._read_cached_metadata(output_csv)
 
         partitions = self._metadata_partitions()
-        raw_dir = save_dir / "raw_metadata" / self.release
+        raw_dir = save_dir / "raw_metadata" / self._cache_release_label()
         raw_dir.mkdir(parents=True, exist_ok=True)
 
         def download_partition(partition: MetadataPartition) -> Path | None:
@@ -281,7 +285,7 @@ class BuildStockProcessor(ABC):
         Returns:
             dict[str, str]: upgrade id -> measure package name, for this release.
         """
-        save_path = save_dir / f"{self.release}-upgrades_lookup.json"
+        save_path = save_dir / f"{self._cache_release_label()}-upgrades_lookup.json"
         if not save_path.exists():
             self.download_file(f"{self.base_url}upgrades_lookup.json", save_path)
 

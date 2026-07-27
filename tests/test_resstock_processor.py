@@ -10,8 +10,13 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor._base import scope_label, sqft_label
-from buildstock_processor.resstock import DEFAULT_RELEASE, RESSTOCK_BUILDING_TYPES, ResStockProcessor
+from buildstock_processor._base import MetadataPartition, scope_label, sqft_label
+from buildstock_processor.resstock import (
+    DEFAULT_RELEASE,
+    DEFAULT_WEATHER_YEAR,
+    RESSTOCK_BUILDING_TYPES,
+    ResStockProcessor,
+)
 
 
 @pytest.fixture
@@ -60,6 +65,7 @@ class TestResStockProcessor:
 
         # Defaults to the most recent supported release
         assert processor.release == DEFAULT_RELEASE
+        assert processor.weather_year == DEFAULT_WEATHER_YEAR
 
         expected_base = "https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/end-use-load-profiles-for-us-building-stock/2025/resstock_amy2018_release_1/"
         assert processor.base_url == expected_base
@@ -72,6 +78,58 @@ class TestResStockProcessor:
 
         with pytest.raises(ValueError, match="Unsupported ResStock release"):
             ResStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, release="release_99")
+
+    @pytest.mark.unit
+    def test_invalid_weather_year_raises(self, test_data_dir):
+        """Test that an unsupported weather year raises a clear error."""
+
+        with pytest.raises(ValueError, match="Unsupported ResStock weather year"):
+            ResStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=test_data_dir, weather_year="tmy3")
+
+    @pytest.mark.unit
+    def test_amy2012_uses_2025_release_1_metadata_layout(self, test_data_dir):
+        """Test that AMY2012 selects the published 2025 release_1 weather-year path."""
+        processor = ResStockProcessor(
+            state="DE",
+            county_name="All",
+            building_type="All",
+            upgrade="0",
+            base_dir=test_data_dir,
+            weather_year="amy2012",
+        )
+
+        expected_base = (
+            "https://oedi-data-lake.s3.amazonaws.com/nrel-pds-building-stock/"
+            "end-use-load-profiles-for-us-building-stock/2025/resstock_amy2012_release_1/"
+        )
+        assert processor.base_url == expected_base
+        assert processor.metadata_url == expected_base + "metadata_and_annual_results/by_state/full/parquet"
+        assert processor._metadata_partition_cache_name(MetadataPartition(state="DE"), "0") == "DE-upgrade0.parquet"
+        assert processor._metadata_partition_cache_name(MetadataPartition(state="DE"), "1") == "DE-upgrade1.parquet"
+        assert (
+            processor._metadata_partition_url(MetadataPartition(state="DE"), "0")
+            == expected_base + "metadata_and_annual_results/by_state/full/parquet/state=DE/DE_upgrade0.parquet"
+        )
+        assert (
+            processor._metadata_partition_url(MetadataPartition(state="DE"), "1")
+            == expected_base + "metadata_and_annual_results/by_state/full/parquet/state=DE/DE_upgrade1.parquet"
+        )
+        assert processor._cache_release_label() == "amy2012_release_1"
+
+    @pytest.mark.unit
+    def test_amy2012_measure_crosswalk_raises_clear_error(self, test_data_dir):
+        """Test that AMY2012 cross-release lookup fails clearly because OEDI does not publish a crosswalk."""
+        processor = ResStockProcessor(
+            state="DE",
+            county_name="All",
+            building_type="All",
+            upgrade="0",
+            base_dir=test_data_dir,
+            weather_year="amy2012",
+        )
+
+        with pytest.raises(ValueError, match="does not publish a measure name crosswalk"):
+            processor.get_measure_crosswalk(save_dir=test_data_dir)
 
     @pytest.mark.unit
     def test_invalid_building_type_raises(self, test_data_dir):
@@ -144,12 +202,13 @@ class TestResStockProcessor:
         """Test metadata downloading and filtering for a multifamily building type."""
         metadata_df = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
 
-        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
+        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor._cache_release_label()
         assert raw_dir.exists()
         assert any(raw_dir.glob("DE-upgrade0.parquet"))
 
         expected_csv = (
-            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
+            sample_processor.base_dir
+            / f"{sample_processor._cache_release_label()}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
             f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
             f"{sample_processor.upgrade}-selected_metadata.csv"
         )
@@ -164,14 +223,35 @@ class TestResStockProcessor:
             assert col in metadata_df.columns
 
     @pytest.mark.integration
+    def test_amy2012_process_metadata_download_and_filter(self, test_data_dir):
+        """Test metadata downloading and filtering against the AMY2012 2025 release_1 dataset."""
+        processor = ResStockProcessor(
+            state="DE",
+            county_name="All",
+            building_type="Single-Family Detached",
+            upgrade="0",
+            base_dir=test_data_dir,
+            weather_year="amy2012",
+        )
+
+        metadata_df = processor.process_metadata(save_dir=test_data_dir)
+
+        raw_dir = test_data_dir / "raw_metadata" / processor._cache_release_label()
+        assert any(raw_dir.glob("DE-upgrade0.parquet"))
+        assert isinstance(metadata_df, pd.DataFrame)
+        assert len(metadata_df) > 0
+        assert all(metadata_df["in.geometry_building_type_recs"] == "Single-Family Detached")
+
+    @pytest.mark.integration
     def test_process_metadata_caching(self, sample_processor):
         """Test that metadata caching works correctly."""
         metadata_df1 = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
 
-        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor.release
+        raw_dir = sample_processor.base_dir / "raw_metadata" / sample_processor._cache_release_label()
         partition_files = list(raw_dir.glob("DE-upgrade0.parquet"))
         csv_file = (
-            sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
+            sample_processor.base_dir
+            / f"{sample_processor._cache_release_label()}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
             f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
             f"{sample_processor.upgrade}-selected_metadata.csv"
         )
@@ -365,7 +445,7 @@ class TestResStockProcessor:
 
         def cache_filename(processor: ResStockProcessor) -> str:
             return (
-                f"{processor.release}-{processor.state}-{scope_label(processor.county_name)}-{processor.building_type}-"
+                f"{processor._cache_release_label()}-{processor.state}-{scope_label(processor.county_name)}-{processor.building_type}-"
                 f"{sqft_label(processor.min_sqft, processor.max_sqft)}-{processor.upgrade}-selected_metadata.csv"
             )
 

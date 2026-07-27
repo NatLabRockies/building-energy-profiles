@@ -113,6 +113,11 @@ Supported residential building types are:
 
 ResStock county values do not contain the state prefix. Pass `"Kent County"`, not `"DE, Kent County"`.
 
+Both processors use the same OEDI release path structure. The publication year is the directory below the common
+building-stock prefix, followed by a folder named `<product>_<weather_year>_<release>`. For example, the default
+processors read from `2025/comstock_amy2018_release_3/` and `2025/resstock_amy2018_release_1/`; ResStock can also
+use `weather_year="amy2012"`, which reads from `2025/resstock_amy2012_release_1/`.
+
 ## Download Time Series
 
 Pass metadata rows directly to `process_building_time_series()`. Start with a small sample: each row can trigger

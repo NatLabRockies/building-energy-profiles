@@ -9,12 +9,15 @@ The code supports only the explicitly registered layouts:
 
 | Dataset | Supported releases | Default |
 | --- | --- | --- |
-| ComStock AMY2018 | `release_1`, `release_2`, `release_3` | `release_3` |
-| ResStock AMY2018 | `release_1` | `release_1` |
+| ComStock AMY2018 | `2025/comstock_amy2018_release_1` through `2025/comstock_amy2018_release_3` | `release_3` |
+| ResStock | `2025/resstock_amy2018_release_1` or `2025/resstock_amy2012_release_1` | `release_1`, `weather_year="amy2018"` |
 
 New OEDI releases are not automatically compatible. Directory layouts, columns, upgrade IDs, and crosswalk files
 can change. Add and test a release in `src/buildstock_processor/comstock.py` or
 `src/buildstock_processor/resstock.py` before using it.
+
+The `release` argument is always the `release_N` component. The year directory and weather-year component are
+resolved by the processor's release registry and, for ResStock, the `weather_year` argument.
 
 ## ComStock and ResStock Records Mean Different Things
 
