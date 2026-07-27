@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition, validate_release
+from .data_dictionary import data_dictionary
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
 # this writing, under the 2025 directory of the OEDI data lake using the same
@@ -29,9 +30,18 @@ SUPPORTED_RELEASES: dict[str, BuildStockRelease] = {
 
 DEFAULT_RELEASE = "release_3"
 
+COMSTOCK_DATA_DICTIONARY = data_dictionary("comstock")
+COMSTOCK_BUILDING_TYPES = COMSTOCK_DATA_DICTIONARY.building_types
+COMSTOCK_RESULT_VARIABLES = COMSTOCK_DATA_DICTIONARY.result_variables
+COMSTOCK_MEASURE_UPGRADE_PACKAGES = COMSTOCK_DATA_DICTIONARY.measure_upgrade_packages
+
 
 class ComStockProcessor(BuildStockProcessor):
     product_name = "ComStock"
+    data_dictionary = COMSTOCK_DATA_DICTIONARY
+    building_types = COMSTOCK_BUILDING_TYPES
+    result_variables = COMSTOCK_RESULT_VARIABLES
+    measure_upgrade_packages = COMSTOCK_MEASURE_UPGRADE_PACKAGES
 
     def __init__(
         self,

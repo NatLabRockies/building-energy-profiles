@@ -60,6 +60,11 @@ The subclass constructor must also set:
 - `time_series_url`
 - `_metadata_key_prefix`
 
+For a published OEDI layout, store the publication year separately from the release identifier. URL construction
+should follow `<year>/<product>_<weather_year>_<release>/`; for example,
+`2025/comstock_amy2018_release_3/`. Keep `release` as `release_N` so upgrade lookup and cache naming remain
+consistent across datasets.
+
 ## Minimal Subclass Shape
 
 ```python

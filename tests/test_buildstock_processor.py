@@ -9,6 +9,13 @@ import pytest
 
 from buildstock_processor import BuildStockProcessor, ComStockProcessor, ResStockProcessor
 from buildstock_processor._base import BuildStockRelease, scope_label, sqft_label, validate_release
+from buildstock_processor.comstock import SUPPORTED_RELEASES as COMSTOCK_SUPPORTED_RELEASES
+from buildstock_processor.resstock import (
+    SUPPORTED_RELEASES as RESSTOCK_SUPPORTED_RELEASES,
+)
+from buildstock_processor.resstock import (
+    SUPPORTED_WEATHER_YEARS,
+)
 
 
 class TestScopeLabel:
@@ -96,3 +103,16 @@ class TestBuildStockProcessor:
 
         assert result.empty
         assert list(result.columns) == []
+
+    @pytest.mark.unit
+    def test_supported_release_paths_use_year_and_release_consistently(self):
+        """Both products encode the publication year and release in the OEDI folder path."""
+        for release, release_info in COMSTOCK_SUPPORTED_RELEASES.items():
+            assert release_info.year == "2025"
+            assert release_info.folder == f"comstock_amy2018_{release}"
+
+        for weather_year in SUPPORTED_WEATHER_YEARS:
+            for release in RESSTOCK_SUPPORTED_RELEASES:
+                release_info = ResStockProcessor._release_info(release, weather_year)
+                assert release_info.year == "2025"
+                assert release_info.folder == f"resstock_{weather_year}_{release}"
