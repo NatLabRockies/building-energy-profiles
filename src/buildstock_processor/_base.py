@@ -10,6 +10,7 @@ format (ComStock: csv, ResStock: xlsx), so that logic lives in each product's ow
 
 import json
 import xml.etree.ElementTree as ET
+from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -35,6 +36,14 @@ class BuildStockRelease:
     year: str
     folder: str
     label: str
+
+
+@dataclass(frozen=True)
+class MetadataPartition:
+    """A published metadata partition for one state and, where applicable, one county."""
+
+    state: str
+    county: str | None = None
 
 
 def validate_release(release: str, supported_releases: dict[str, BuildStockRelease], product: str) -> None:
@@ -66,15 +75,12 @@ def sqft_label(min_sqft: float | None, max_sqft: float | None) -> str:
     return f"{lo}-{hi}sqft"
 
 
-class BuildStockProcessor:
-    """Shared base class for ComStockProcessor and ResStockProcessor.
+class BuildStockProcessor(ABC):
+    """Abstract base class for ComStockProcessor and ResStockProcessor.
 
-    Provides S3 listing/downloading, upgrade package lookup, and time series downloading, since those are
-    identical between ComStock and ResStock. Subclasses set `self.base_url`, `self.time_series_url`,
-    `self._metadata_key_prefix`, `self.release`, and `self.upgrade` in their own `__init__`, and implement
-    their own `process_metadata()`/`get_measure_crosswalk()`/`find_upgrade_id()`, since metadata
-    partitioning (state+county vs. state-only) and measure crosswalk file formats (csv vs. xlsx) differ
-    between products.
+    Owns the shared metadata workflow, S3 listing/downloading, cache naming, upgrade package lookup, and
+    time-series downloading. Subclasses provide dataset-specific hooks for partition discovery, partition
+    paths, metadata filtering, and measure crosswalks.
     """
 
     # Public, unauthenticated S3 bucket hosting both datasets.
@@ -86,10 +92,15 @@ class BuildStockProcessor:
     IO_WORKERS = 16
 
     # Set by subclasses in __init__.
+    product_name: str
     base_url: str
+    metadata_url: str
     time_series_url: str
+    state: str
     release: str
     upgrade: str
+    building_type: str
+    base_dir: Path
     county_name: str | list[str]
     min_sqft: float | None
     max_sqft: float | None
@@ -155,6 +166,105 @@ class BuildStockProcessor:
             meta_df = meta_df[meta_df["in.sqft..ft2"] >= self.min_sqft]
         if self.max_sqft is not None:
             meta_df = meta_df[meta_df["in.sqft..ft2"] <= self.max_sqft]
+        return meta_df
+
+    @abstractmethod
+    def _metadata_partitions(self) -> list[MetadataPartition]:
+        """Return the published metadata partitions required for this processor's state scope."""
+
+    @abstractmethod
+    def _metadata_partition_cache_name(self, partition: MetadataPartition, upgrade: str) -> str:
+        """Return the local parquet filename for one metadata partition."""
+
+    @abstractmethod
+    def _metadata_partition_url(self, partition: MetadataPartition, upgrade: str) -> str:
+        """Return the public URL for one metadata partition."""
+
+    @abstractmethod
+    def _filter_metadata(self, meta_df: pd.DataFrame) -> pd.DataFrame:
+        """Apply dataset-specific geography and building-type filters."""
+
+    @abstractmethod
+    def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
+        """Download and return the dataset-specific measure crosswalk."""
+
+    @abstractmethod
+    def find_upgrade_id(self, save_dir: Path, measure_id: str, target_release: str | None = None) -> str | None:
+        """Resolve a stable measure ID to a dataset- and release-specific upgrade ID."""
+
+    def _selected_metadata_path(self, save_dir: Path, upgrade_label: str) -> Path:
+        return (
+            save_dir / f"{self.release}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade_label}-selected_metadata.csv"
+        )
+
+    @staticmethod
+    def _read_cached_metadata(path: Path) -> pd.DataFrame:
+        try:
+            return pd.read_csv(path)
+        except pd.errors.EmptyDataError:
+            return pd.DataFrame()
+
+    def process_metadata(self, save_dir: Path) -> pd.DataFrame:
+        """Download, cache, combine, and filter metadata for the configured upgrade."""
+        return self._download_metadata_for_upgrade(save_dir, self.upgrade)
+
+    def process_metadata_for_upgrades(self, save_dir: Path, upgrades: list[str] | None = None) -> pd.DataFrame:
+        """Download and combine metadata for multiple upgrade packages."""
+        all_upgrades = list(self.list_upgrades(save_dir))
+        selected_upgrades = all_upgrades if upgrades is None else upgrades
+        combo_label = "all" if set(selected_upgrades) == set(all_upgrades) else "-".join(sorted(selected_upgrades))
+        output_csv = self._selected_metadata_path(save_dir, f"upgrades_{combo_label}")
+
+        if output_csv.exists():
+            print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
+            return self._read_cached_metadata(output_csv)
+
+        frames = [self._download_metadata_for_upgrade(save_dir, upgrade) for upgrade in selected_upgrades]
+        combined_df = pd.concat(frames, ignore_index=True) if frames else pd.DataFrame()
+        combined_df.to_csv(output_csv, index=False)
+        return combined_df
+
+    def _download_metadata_for_upgrade(self, save_dir: Path, upgrade: str) -> pd.DataFrame:
+        """Download and filter all required metadata partitions for one upgrade."""
+        output_csv = self._selected_metadata_path(save_dir, upgrade)
+        if output_csv.exists():
+            print(f"Metadata csv already exists. Skipping creation. Delete {output_csv} if you want to save again.")
+            return self._read_cached_metadata(output_csv)
+
+        partitions = self._metadata_partitions()
+        raw_dir = save_dir / "raw_metadata" / self.release
+        raw_dir.mkdir(parents=True, exist_ok=True)
+
+        def download_partition(partition: MetadataPartition) -> Path | None:
+            save_path = raw_dir / self._metadata_partition_cache_name(partition, upgrade)
+            if not save_path.exists():
+                partition_url = self._metadata_partition_url(partition, upgrade)
+                try:
+                    self.download_file(partition_url, save_path)
+                except requests.RequestException:
+                    tqdm.write(f"Failed to download metadata partition: {partition_url}")
+                    return None
+            return save_path if save_path.exists() else None
+
+        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
+            downloaded = list(
+                tqdm(
+                    executor.map(download_partition, partitions),
+                    total=len(partitions),
+                    desc=f"Downloading {self.product_name} metadata partitions (upgrade {upgrade})",
+                )
+            )
+
+        partition_files = [path for path in downloaded if path is not None]
+        if not partition_files:
+            meta_df = pd.DataFrame()
+        else:
+            meta_df = pd.concat((pd.read_parquet(path) for path in partition_files), ignore_index=True)
+            meta_df = self._filter_metadata(meta_df)
+            meta_df = self._apply_sqft_filter(meta_df).reset_index(drop=True)
+
+        meta_df.to_csv(output_csv, index=False)
         return meta_df
 
     def list_upgrades(self, save_dir: Path) -> dict[str, str]:

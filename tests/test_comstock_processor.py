@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor import scope_label, sqft_label
-from comstock_processor import DEFAULT_RELEASE, SUPPORTED_RELEASES, ComStockProcessor
+from buildstock_processor._base import scope_label, sqft_label
+from buildstock_processor.comstock import DEFAULT_RELEASE, SUPPORTED_RELEASES, ComStockProcessor
 
 
 @pytest.fixture

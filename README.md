@@ -1,6 +1,15 @@
-# ComStock Processor
+# BuildStock Processor
 
-A Python class to help download ComStock data locally for analysis. The `ComStockProcessor` class provides an easy interface to download metadata and time series data from the ComStock dataset hosted on AWS S3.
+A Python package for downloading and analyzing NREL ComStock and ResStock metadata, annual results, upgrade
+packages, and individual-building time series from the public OEDI data lake.
+
+The package exposes two processors:
+
+- `ComStockProcessor` for commercial whole-building records.
+- `ResStockProcessor` for residential dwelling-unit records.
+
+Both use shared download, cache, filtering, upgrade-lookup, and time-series infrastructure. They remain separate
+because their releases, metadata partitioning, building types, crosswalk formats, and record semantics differ.
 
 ## Installation
 
@@ -11,15 +20,75 @@ pip install uv
 uv sync --group dev
 ```
 
+The project uses a standard `src/` package layout. `uv sync` installs `buildstock_processor` into the project
+environment as an editable package.
+
+## Documentation
+
+- [Usage guide](docs/usage.md): installation, searches, time series, upgrades, weights, total-energy calculations,
+  and schema normalization.
+- [Data model and limitations](docs/limitations.md): releases, download scope, caching, duplicate records,
+  multifamily semantics, time-series differences, and network behavior.
+- [Extending the package](docs/extending.md): the `BuildStockProcessor` abstract contract and how to add
+  another BuildStock dataset.
+- [Basic ComStock notebook](01_data_sampling_example.ipynb).
+- [Washington, DC office and multifamily analysis](02_washington_dc_stock_analysis.ipynb), including gross floor
+  area, total site energy, stock multipliers, demand profiles, monthly end uses, and measure recommendations.
+
+## Quick Start
+
+```python
+from pathlib import Path
+
+from buildstock_processor import ComStockProcessor, ResStockProcessor
+
+comstock_dir = Path("datasets/comstock")
+comstock_dir.mkdir(parents=True, exist_ok=True)
+
+offices = ComStockProcessor(
+    state="DC",
+    county_name="All",
+    building_type="SmallOffice",
+    upgrade="0",
+    base_dir=comstock_dir,
+).process_metadata(save_dir=comstock_dir)
+
+resstock_dir = Path("datasets/resstock")
+resstock_dir.mkdir(parents=True, exist_ok=True)
+
+multifamily_units = ResStockProcessor(
+    state="DC",
+    county_name="All",
+    building_type="Multi-Family with 5+ Units",
+    upgrade="0",
+    base_dir=resstock_dir,
+).process_metadata(save_dir=resstock_dir)
+```
+
+ComStock rows represent commercial buildings. ResStock rows represent independently sampled dwelling units,
+including units in multifamily buildings; they are not whole-building records. Read
+[Data model and limitations](docs/limitations.md) before combining or weighting the two stocks.
+
+## Package Layout
+
+```text
+src/buildstock_processor/
+|-- __init__.py   # public processors and abstract extension types
+|-- _base.py      # BuildStockProcessor ABC and shared workflows
+|-- comstock.py   # ComStock implementation and releases
+`-- resstock.py   # ResStock implementation and releases
+```
+
 ## ComStockProcessor Class
 
-The `ComStockProcessor` class is located in `lib/comstock_processor.py` and provides methods to download and process ComStock building data.
+The `ComStockProcessor` class is located in `src/buildstock_processor/comstock.py` and provides methods to
+download and process ComStock building data.
 
 ### Initialization
 
 ```python
 from pathlib import Path
-from lib.comstock_processor import ComStockProcessor
+from buildstock_processor import ComStockProcessor
 
 # Initialize the processor
 processor = ComStockProcessor(
@@ -47,7 +116,7 @@ supports the last three published releases of the ComStock AMY2018 dataset, sele
 
 If `release` is omitted, the most recent supported release is used. Passing an unsupported value raises a `ValueError`
 listing the currently supported releases. The full set of supported releases and their on-disk locations are defined
-in `SUPPORTED_RELEASES` in `comstock_processor.py` — when NREL publishes a new release, add it there and drop the
+in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NREL publishes a new release, add it there and drop the
 oldest entry to keep a rolling window of three supported releases.
 
 ### Methods
@@ -172,7 +241,7 @@ upgrade_id_r1 = processor.find_upgrade_id(save_dir=base_dir, measure_id="hvac_00
 
 ```python
 from pathlib import Path
-from lib.comstock_processor import ComStockProcessor
+from buildstock_processor import ComStockProcessor
 
 # Set up directories
 base_dir = Path("./datasets/comstock")
@@ -214,15 +283,15 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 
 ## ResStockProcessor Class
 
-The `ResStockProcessor` class (in `resstock_processor.py`) provides the same interface for NREL's
+The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NREL's
 **residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
 its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
-`BuildStockProcessor` base class (`buildstock_processor.py`), but has its own metadata layout and
+abstract `BuildStockProcessor` base class (`src/buildstock_processor/_base.py`), but has its own metadata layout and
 release registry, since ResStock's file structure and building-type categories differ from ComStock's.
 
 ```python
 from pathlib import Path
-from resstock_processor import ResStockProcessor
+from buildstock_processor import ResStockProcessor
 
 processor = ResStockProcessor(
     state="CA",
@@ -249,7 +318,7 @@ metadata_df = processor.process_metadata(save_dir=processor.base_dir)
     `Multi-Family with 5+ Units`
 - **Releases**: only `"release_1"` (the default) is currently supported. Unlike ComStock, ResStock hasn't
   been fully remastered into a single consistent layout across multiple releases yet -- see
-  `SUPPORTED_RELEASES` in `resstock_processor.py` for notes on adding more releases later.
+  `SUPPORTED_RELEASES` in `src/buildstock_processor/resstock.py` for notes on adding more releases later.
 - **Measure crosswalk format**: `get_measure_crosswalk()` downloads an **Excel** file
   (`measure_name_crosswalk_res_{year}_{release}.xlsx`), not a csv like ComStock (this is why
   [`openpyxl`](https://openpyxl.readthedocs.io/) is a dependency).
@@ -289,8 +358,6 @@ values (residential, not commercial), described above.
 
 ## Development
 
-## Testing
-
 The processor includes comprehensive unit and integration tests validating both `ComStockProcessor`
 (`tests/test_comstock_processor.py`) and `ResStockProcessor` (`tests/test_resstock_processor.py`).
 
@@ -315,9 +382,16 @@ uv run pytest tests -v
 ### Test Categories
 
 - **Unit tests**: Fast tests that verify initialization and basic functionality
-- **Integration tests**: Tests that download and process real ComStock data. `test_all_state_filter`
+- **Integration tests**: Tests that download and process real ComStock and ResStock data. `test_all_state_filter`
   mocks state discovery down to a couple of small states so it can exercise the real `state="All"`
   code path without downloading every state's/county's metadata partition.
+
+Execute the notebooks as integration checks:
+
+```bash
+uv run jupyter nbconvert --to html --execute 01_data_sampling_example.ipynb
+uv run jupyter nbconvert --to html --execute 02_washington_dc_stock_analysis.ipynb
+```
 
 ### Committing
 
