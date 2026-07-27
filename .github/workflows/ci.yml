@@ -20,7 +20,7 @@ jobs:
       run:
         shell: bash # for windows and linux
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - name: Install uv and set up Python ${{ matrix.python-version }}
         uses: astral-sh/setup-uv@v9.0.0
         with:
@@ -52,7 +52,7 @@ jobs:
         run: uv run jupyter nbconvert --to html --execute 01_data_sampling_example.ipynb --output test_output-${{ github.run_id }}.html
       - name: Upload HTML Artifact
         if: ${{ matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: notebook-html-${{ github.run_id }}
           path: test_output-${{ github.run_id }}.html
