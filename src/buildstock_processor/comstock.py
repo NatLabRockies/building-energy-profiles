@@ -2,7 +2,7 @@
 ComStock Processor - A tool to download and process ComStock data.
 
 This package provides utilities for downloading metadata and time series data
-from NREL's ComStock dataset hosted on AWS S3.
+from NLR's ComStock dataset hosted on AWS S3.
 
 @author: nllong
 """
@@ -20,7 +20,7 @@ from .data_dictionary import data_dictionary
 # metadata_and_annual_results/by_state_and_county partitioned layout, and the same
 # timeseries_individual_buildings/by_state layout used for time series files.
 #
-# When NREL publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
+# When NLR publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
 # default) and drop the oldest entry to keep this rolling window at three supported releases.
 SUPPORTED_RELEASES: dict[str, BuildStockRelease] = {
     "release_1": BuildStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
