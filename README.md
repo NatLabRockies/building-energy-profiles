@@ -1,6 +1,6 @@
 # BuildStock Processor
 
-A Python package for downloading and analyzing NREL ComStock and ResStock metadata, annual results, upgrade
+A Python package for downloading and analyzing NLR ComStock and ResStock metadata, annual results, upgrade
 packages, and individual-building time series from the public OEDI data lake.
 
 The package exposes two processors:
@@ -89,7 +89,7 @@ Upgrade package ids are release-specific, so they are grouped by release in both
 
 ## ENERGY STAR Building Type Crosswalk
 
-The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NREL/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
+The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NLR/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
 
 ```python
 from buildstock_processor import map_energy_star_property_type, energy_star_property_types_for_buildstock_type
@@ -151,7 +151,7 @@ supports the last three published releases of the ComStock AMY2018 dataset, sele
 
 If `release` is omitted, the most recent supported release is used. Passing an unsupported value raises a `ValueError`
 listing the currently supported releases. The full set of supported releases and their on-disk locations are defined
-in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NREL publishes a new release, add it there and drop the
+in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NLR publishes a new release, add it there and drop the
 oldest entry to keep a rolling window of three supported releases.
 
 ### OEDI year and release paths
@@ -336,7 +336,7 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 
 ## ResStockProcessor Class
 
-The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NREL's
+The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NLR's
 **residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
 its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
 abstract `BuildStockProcessor` base class (`src/buildstock_processor/_base.py`), but has its own metadata layout and

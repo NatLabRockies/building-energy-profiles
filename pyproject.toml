@@ -5,7 +5,7 @@ build-backend = "uv_build"
 [project]
 name = "buildstock-processor"
 version = "0.1.0"
-description = "Download and analyze NREL ComStock and ResStock data."
+description = "Download and analyze NLR ComStock and ResStock data."
 readme = "README.md"
 authors = [{ name = "Nicholas Long" }]
 license = "BSD-3-Clause"

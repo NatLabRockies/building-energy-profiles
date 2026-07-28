@@ -1,4 +1,4 @@
-"""Download and analyze NREL BuildStock datasets."""
+"""Download and analyze NLR BuildStock datasets."""
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition
 from .comstock import ComStockProcessor

@@ -2,7 +2,7 @@
 
 This file mirrors `src/buildstock_processor/energy_star_crosswalk.json` in a Markdown format that is easy for people and simple tools to parse. The Python API exposes the same data through `energy_star_crosswalk()`, `map_energy_star_property_type()`, and `energy_star_property_types_for_buildstock_type()`.
 
-This is a best-effort crosswalk authored for buildstock_processor, **not** an official NREL or EPA publication. ENERGY STAR Portfolio Manager's property types are far more granular (and organized differently) than BuildStock's building types, which come from DOE's commercial prototype building models (ComStock) and simplified residential housing categories (ResStock). Several ENERGY STAR property types have no close BuildStock equivalent at all -- those rows have match_quality = unmapped and empty product/building-type columns.
+This is a best-effort crosswalk authored for buildstock_processor, **not** an official NLR or EPA publication. ENERGY STAR Portfolio Manager's property types are far more granular (and organized differently) than BuildStock's building types, which come from DOE's commercial prototype building models (ComStock) and simplified residential housing categories (ResStock). Several ENERGY STAR property types have no close BuildStock equivalent at all -- those rows have match_quality = unmapped and empty product/building-type columns.
 
 - Total ENERGY STAR property types: 84
 - exact matches: 13
