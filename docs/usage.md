@@ -285,16 +285,16 @@ upgrade_id = comstock_processor.find_upgrade_id(
 )
 ```
 
-## Ensemble ("Mixed-Use") Building Types
+## Composite ("Mixed-Use") Building Types
 
 Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that
-is 70% office space over 30% ground-floor retail. `EnsembleBuildingType` models this as a fraction-weighted
+is 70% office space over 30% ground-floor retail. `CompositeBuildingType` models this as a fraction-weighted
 combination of two or more `(product, building_type)` components (fractions must sum to 1.0).
 
 ```python
-from buildstock_processor import EnsembleBuildingType, pull_ensemble_time_series
+from buildstock_processor import CompositeBuildingType, pull_composite_time_series
 
-office_retail = EnsembleBuildingType.from_fractions(
+office_retail = CompositeBuildingType.from_fractions(
     "70% MediumOffice / 30% RetailStripmall",
     {
         ("comstock", "MediumOffice"): 0.7,
@@ -302,19 +302,19 @@ office_retail = EnsembleBuildingType.from_fractions(
     },
 )
 
-combined, components = pull_ensemble_time_series(
+combined, components = pull_composite_time_series(
     office_retail,
-    save_dir=ensemble_dir,
+    save_dir=composite_dir,
     state="DE",
 )
 ```
 
-`pull_ensemble_time_series()` downloads one representative building's time series per component (via
+`pull_composite_time_series()` downloads one representative building's time series per component (via
 `process_building_time_series()`, same as any other time series download), then auto-stitches every
-component into a single synthetic ensemble time series with `combine_ensemble_time_series()`:
+component into a single synthetic composite time series with `combine_composite_time_series()`:
 
 ```text
-ensemble[column][t] = sum(component.fraction * component_series[column][t] for component in ensemble)
+composite[column][t] = sum(component.fraction * component_series[column][t] for component in composite)
 ```
 
 Components can mix ComStock and ResStock (e.g. ground-floor retail under apartments). Column names are
@@ -322,7 +322,7 @@ normalized first with `normalize_time_series_columns()`, since ResStock time ser
 unit suffix that ComStock's don't:
 
 ```python
-mixed_use = EnsembleBuildingType.from_fractions(
+mixed_use = CompositeBuildingType.from_fractions(
     "55% Ground-Floor Retail / 45% Apartments",
     {
         ("comstock", "RetailStripmall"): 0.55,
@@ -332,9 +332,9 @@ mixed_use = EnsembleBuildingType.from_fractions(
 ```
 
 If you already downloaded component time series yourself (e.g. for specific hand-picked buildings), skip
-the download step and call `combine_ensemble_time_series()` directly with a
+the download step and call `combine_composite_time_series()` directly with a
 `{(product, building_type): DataFrame}` mapping. If fractions don't sum to exactly 1.0 (e.g. percentages
-that don't sum perfectly due to rounding), fix them with `ensemble.normalized()`.
+that don't sum perfectly due to rounding), fix them with `composite.normalized()`.
 
 ## Notebook Examples
 
@@ -342,8 +342,8 @@ that don't sum perfectly due to rounding), fix them with `ensemble.normalized()`
 - [`02_washington_dc_stock_analysis.ipynb`](../02_washington_dc_stock_analysis.ipynb) combines DC offices and
   multifamily units, plots gross floor area and total site energy, applies stock multipliers, downloads selected
   time series, and builds measure recommendations.
-- [`03_ensemble_building_example.ipynb`](../03_ensemble_building_example.ipynb) demonstrates
-  `EnsembleBuildingType` and `pull_ensemble_time_series()`/`combine_ensemble_time_series()`: modeling a
+- [`03_composite_building_example.ipynb`](../03_composite_building_example.ipynb) demonstrates
+  `CompositeBuildingType` and `pull_composite_time_series()`/`combine_composite_time_series()`: modeling a
   mixed-use building as a fraction-weighted combination of BuildStock building types (including a
   cross-product example mixing ComStock and ResStock components).
 

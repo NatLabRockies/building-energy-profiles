@@ -1,6 +1,13 @@
 """Download and analyze NREL BuildStock datasets."""
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition
+from .composite import (
+    CompositeBuildingType,
+    CompositeComponent,
+    combine_composite_time_series,
+    normalize_time_series_columns,
+    pull_composite_time_series,
+)
 from .comstock import ComStockProcessor
 from .data_dictionary import (
     BuildStock,
@@ -17,13 +24,6 @@ from .energy_star_crosswalk import (
     list_energy_star_property_types,
     map_energy_star_property_type,
 )
-from .ensemble import (
-    EnsembleBuildingType,
-    EnsembleComponent,
-    combine_ensemble_time_series,
-    normalize_time_series_columns,
-    pull_ensemble_time_series,
-)
 from .resstock import ResStockProcessor
 
 __all__ = [
@@ -33,19 +33,19 @@ __all__ = [
     "BuildStockProcessor",
     "BuildStockRelease",
     "ComStockProcessor",
+    "CompositeBuildingType",
+    "CompositeComponent",
     "EnergyStarMapping",
-    "EnsembleBuildingType",
-    "EnsembleComponent",
     "MetadataPartition",
     "ResStockProcessor",
     "ResultVariable",
-    "combine_ensemble_time_series",
+    "combine_composite_time_series",
     "data_dictionary",
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
     "list_energy_star_property_types",
     "map_energy_star_property_type",
     "normalize_time_series_columns",
-    "pull_ensemble_time_series",
+    "pull_composite_time_series",
     "result_variables_from_columns",
 ]

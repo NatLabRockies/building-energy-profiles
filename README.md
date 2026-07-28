@@ -102,18 +102,18 @@ energy_star_property_types_for_buildstock_type("comstock", "SmallOffice")
 # ('Bank Branch', 'Financial Office', 'Fire Station', ...) -- reverse lookup
 ```
 
-## Ensemble ("Mixed-Use") Building Types
+## Composite ("Mixed-Use") Building Types
 
-Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that is 70% office space over 30% ground-floor retail. `EnsembleBuildingType` (see [docs/usage.md](docs/usage.md#ensemble-mixed-use-building-types) and [`03_ensemble_building_example.ipynb`](03_ensemble_building_example.ipynb)) models this as a fraction-weighted combination of two or more `(product, building_type)` components -- including mixing ComStock and ResStock components (e.g. ground-floor retail under apartments). `pull_ensemble_time_series()` downloads a representative building's time series per component and auto-stitches them into one synthetic ensemble time series; `combine_ensemble_time_series()` does the combining step alone if you've already downloaded component time series yourself.
+Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that is 70% office space over 30% ground-floor retail. `CompositeBuildingType` (see [docs/usage.md](docs/usage.md#composite-mixed-use-building-types) and [`03_composite_building_example.ipynb`](03_composite_building_example.ipynb)) models this as a fraction-weighted combination of two or more `(product, building_type)` components -- including mixing ComStock and ResStock components (e.g. ground-floor retail under apartments). `pull_composite_time_series()` downloads a representative building's time series per component and auto-stitches them into one synthetic composite time series; `combine_composite_time_series()` does the combining step alone if you've already downloaded component time series yourself.
 
 ```python
-from buildstock_processor import EnsembleBuildingType, pull_ensemble_time_series
+from buildstock_processor import CompositeBuildingType, pull_composite_time_series
 
-office_retail = EnsembleBuildingType.from_fractions(
+office_retail = CompositeBuildingType.from_fractions(
     "70% MediumOffice / 30% RetailStripmall",
     {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
 )
-combined, components = pull_ensemble_time_series(office_retail, save_dir=ensemble_dir, state="DE")
+combined, components = pull_composite_time_series(office_retail, save_dir=composite_dir, state="DE")
 ```
 
 ## Package Layout
@@ -126,7 +126,7 @@ src/buildstock_processor/
 |-- resstock.py                  # ResStock implementation and releases
 |-- data_dictionary.py           # packaged building-type/result-variable/upgrade-package dictionary
 |-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
-`-- ensemble.py                  # EnsembleBuildingType + combine/pull ensemble time series
+`-- composite.py                 # CompositeBuildingType + combine/pull composite time series
 ```
 
 ## ComStockProcessor Class

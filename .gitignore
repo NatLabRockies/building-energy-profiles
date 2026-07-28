@@ -20,7 +20,7 @@ source_files/*.pbf
 datasets/comstock
 datasets/resstock
 datasets/test_data
-datasets/ensemble
+datasets/composite
 !datasets/comstock/README.md
 
 # added by MSweeney
