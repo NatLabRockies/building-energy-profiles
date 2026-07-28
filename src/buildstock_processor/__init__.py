@@ -24,6 +24,14 @@ from .energy_star_crosswalk import (
     list_energy_star_property_types,
     map_energy_star_property_type,
 )
+from .portfolio import (
+    CombinedMetric,
+    ComponentEstimate,
+    MetricStats,
+    PortfolioComponent,
+    PortfolioEnergyEstimate,
+    estimate_portfolio_energy,
+)
 from .resstock import ResStockProcessor
 
 __all__ = [
@@ -33,16 +41,22 @@ __all__ = [
     "BuildStockProcessor",
     "BuildStockRelease",
     "ComStockProcessor",
+    "CombinedMetric",
+    "ComponentEstimate",
     "CompositeBuildingType",
     "CompositeComponent",
     "EnergyStarMapping",
     "MetadataPartition",
+    "MetricStats",
+    "PortfolioComponent",
+    "PortfolioEnergyEstimate",
     "ResStockProcessor",
     "ResultVariable",
     "combine_composite_time_series",
     "data_dictionary",
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
+    "estimate_portfolio_energy",
     "list_energy_star_property_types",
     "map_energy_star_property_type",
     "normalize_time_series_columns",
