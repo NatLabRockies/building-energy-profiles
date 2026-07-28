@@ -1,0 +1,121 @@
+.measure-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem;
+  margin: 1rem 0;
+
+  .search-input {
+    min-width: 220px;
+    flex: 1;
+    max-width: 320px;
+  }
+
+  .selection-count {
+    margin-left: auto;
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+
+  .clear-btn {
+    background: transparent;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 0.1rem 0.5rem;
+    font-size: 0.8rem;
+    cursor: pointer;
+  }
+}
+
+.product-filter {
+  display: flex;
+  gap: 0.25rem;
+
+  button {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    padding: 0.25rem 0.8rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+
+    &.active {
+      background: var(--color-primary);
+      border-color: var(--color-primary);
+      color: #fff;
+    }
+  }
+}
+
+.product-badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.05rem 0.5rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  margin-right: 0.4rem;
+
+  &.comstock {
+    background: #eef2ff;
+    color: var(--color-primary-dark);
+  }
+
+  &.resstock {
+    background: #ecfdf5;
+    color: #047857;
+  }
+}
+
+.no-results {
+  color: var(--color-muted);
+  font-size: 0.9rem;
+}
+
+.measure-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  max-width: 500px;
+  max-height: 420px;
+  overflow-y: auto;
+}
+
+.measure-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  background: var(--color-surface);
+  font-size: 0.9rem;
+  cursor: pointer;
+
+  &.selected {
+    border-color: var(--color-primary);
+    background: #eff6ff;
+  }
+}
+
+.savings-chart {
+  height: 320px;
+  margin-top: 1.5rem;
+}
+
+.ldc-box,
+.end-use-box {
+  height: 360px;
+  margin-top: 1.5rem;
+}
+
+.chart-note {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  max-width: 70ch;
+}
