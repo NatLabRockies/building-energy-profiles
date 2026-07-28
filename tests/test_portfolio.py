@@ -111,6 +111,10 @@ class TestPortfolioComponent:
         with pytest.raises(ValueError, match="target_units must be"):
             PortfolioComponent(product="resstock", building_type="Multi-Family with 5+ Units", target_units=-5)
 
+    def test_target_units_on_comstock_component_raises(self):
+        with pytest.raises(ValueError, match="only valid for resstock"):
+            PortfolioComponent(product="comstock", building_type="MediumOffice", target_units=100)
+
 
 class TestEstimatePortfolioEnergySingleComponent:
     def test_target_sqft_scales_mean_and_std_linearly(self, patch_metadata, tmp_path):
@@ -146,7 +150,10 @@ class TestEstimatePortfolioEnergySingleComponent:
 
         estimate = result.components[0]
         assert estimate.resolved_target_units == pytest.approx(1000)
-        assert estimate.resolved_target_sqft is None
+        # resolved_target_sqft is now an *estimate* (dwelling_count * avg_sqft_per_unit), not None, so a
+        # caller who sized this component by unit count can still see its equivalent floor area.
+        assert estimate.resolved_target_sqft == pytest.approx(1000 * 900)
+        assert estimate.dwelling_count_label == "units"
         metric = estimate.metrics[ELECTRICITY]
         assert metric.scaled_mean == pytest.approx(metric.sample_mean * 1000)
         assert metric.scaled_std == pytest.approx(metric.sample_std * (1000**0.5))
@@ -191,6 +198,60 @@ class TestEstimatePortfolioEnergySingleComponent:
 
         with pytest.raises(ValueError, match="No buildings/units found"):
             estimate_portfolio_energy([component], save_dir=tmp_path, state="CO")
+
+    def test_resstock_target_sqft_is_converted_to_dwelling_count_stats(self, patch_metadata, tmp_path):
+        """A ResStock component sized by target_sqft should still use the dwelling-count statistical model
+        (std scales by sqrt(N), not linearly) -- unlike a ComStock component, since ResStock rows are always
+        one independent dwelling, not one whole building being resized.
+        """
+        patch_metadata[("resstock", "Multi-Family with 5+ Units")] = _resstock_frame(
+            n=300, unit_sqft=900, electricity_mean=3_000, electricity_std=500
+        )
+        # 900,000 sqft / 900 sqft-per-unit = 1000 implied units.
+        component = PortfolioComponent(product="resstock", building_type="Multi-Family with 5+ Units", target_sqft=900_000)
+
+        result = estimate_portfolio_energy([component], save_dir=tmp_path, state="CO", county_name="Denver", value_columns=[ELECTRICITY])
+
+        estimate = result.components[0]
+        assert estimate.resolved_target_sqft == pytest.approx(900_000)
+        assert estimate.resolved_target_units == pytest.approx(1000)
+        assert estimate.dwelling_count_label == "units"
+        metric = estimate.metrics[ELECTRICITY]
+        assert metric.scaled_mean == pytest.approx(metric.sample_mean * 1000)
+        # This is the key behavioral difference from ComStock's target_sqft handling: std scales by
+        # sqrt(dwelling_count), not linearly by (target_sqft / avg_sqft).
+        assert metric.scaled_std == pytest.approx(metric.sample_std * (1000**0.5))
+
+    def test_single_family_component_labeled_homes(self, patch_metadata, tmp_path):
+        patch_metadata[("resstock", "Single-Family Detached")] = _resstock_frame(
+            n=200, unit_sqft=1_800, electricity_mean=4_000, electricity_std=800, units_in_building=1
+        )
+        component = PortfolioComponent(product="resstock", building_type="Single-Family Detached", target_units=40)
+
+        result = estimate_portfolio_energy([component], save_dir=tmp_path, state="CO", value_columns=[ELECTRICITY])
+
+        estimate = result.components[0]
+        assert estimate.dwelling_count_label == "homes"
+        assert estimate.resolved_target_units == pytest.approx(40)
+        assert estimate.resolved_target_sqft == pytest.approx(40 * 1_800)
+        metric = estimate.metrics[ELECTRICITY]
+        assert metric.scaled_mean == pytest.approx(metric.sample_mean * 40)
+        assert metric.scaled_std == pytest.approx(metric.sample_std * (40**0.5))
+
+    def test_fraction_sizing_single_family_component_warns(self, patch_metadata, tmp_path):
+        patch_metadata[("resstock", "Single-Family Detached")] = _resstock_frame(
+            n=200, unit_sqft=1_800, electricity_mean=4_000, electricity_std=800, units_in_building=1
+        )
+        patch_metadata[("comstock", "RetailStripmall")] = _comstock_frame(n=50, sqft=20_000, electricity_mean=40_000, electricity_std=4_000)
+        anchor = PortfolioComponent(product="comstock", building_type="RetailStripmall", target_sqft=20_000)
+        single_family = PortfolioComponent(product="resstock", building_type="Single-Family Detached", fraction=0.3)
+
+        result = estimate_portfolio_energy([anchor, single_family], save_dir=tmp_path, state="CO", value_columns=[ELECTRICITY])
+
+        assert any("unusual" in warning for warning in result.warnings)
+        single_family_estimate = next(c for c in result.components if c.building_type == "Single-Family Detached")
+        assert single_family_estimate.dwelling_count_label == "homes"
+        assert any("unusual" in warning for warning in single_family_estimate.warnings)
 
 
 class TestEstimatePortfolioEnergyMultipleComponents:

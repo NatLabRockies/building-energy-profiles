@@ -13,27 +13,39 @@ standard deviation for each requested energy metric. That population spread beco
 bars" -- a statistical uncertainty band reflecting real building-to-building variability (different
 occupants, equipment, vintage, etc. within the same nominal building type), not simulation numerical error.
 
-Two distinct scaling modes are supported per component, matching two different physical situations:
+A component's underlying BuildStock product determines which statistical model applies to *any* of its
+sizing modes (`target_sqft`, `target_units`, or `fraction`):
 
-- `target_sqft` (or a `fraction`-of-total resolved to an equivalent square footage -- see below): rescales
-  *one* building's population mean/std intensity to an actual floor area, by multiplying by
-  `target_sqft / avg_sqft`. This models "my one office building is this big instead of the sample's average
-  size" -- both the mean *and* the standard deviation scale by the same linear factor, since resizing one
-  building doesn't reduce how uncertain we are about it.
-- `target_units` (only meaningful for ResStock components where each metadata row is already one simulated
-  dwelling unit -- see `resstock.py`'s module docstring): models *summing* `target_units` independent
-  dwelling units into one building's total. Assuming unit-to-unit energy use is roughly independent (a
-  simplification -- real units in the same building share climate/construction/systems and are therefore
-  correlated, so this likely *understates* true uncertainty somewhat), the mean scales linearly
-  (`mean * target_units`) but the standard deviation scales by `sqrt(target_units)` (summing N i.i.d. random
-  variables), so a 1000-unit building's *relative* uncertainty is much tighter than any single unit's.
+- ComStock simulates whole buildings (one metadata row = one representative building), so a ComStock
+  component always rescales *one* building's population mean/std intensity to an actual floor area, by
+  multiplying by `target_sqft / avg_sqft`. This models "my one office building is this big instead of the
+  sample's average size" -- both the mean *and* the standard deviation scale by the same linear factor,
+  since resizing one building doesn't reduce how uncertain we are about it.
+- ResStock simulates individual dwelling units/homes (one metadata row = one simulated dwelling, whether an
+  apartment unit within a larger multifamily building or a whole standalone single-family/mobile home -- see
+  `resstock.py`'s module docstring), so a ResStock component's size is fundamentally a *dwelling count*, not
+  a floor area -- even when the caller specifies `target_sqft` or `fraction`, this is converted to an
+  equivalent dwelling count (`target_sqft / avg_sqft_per_dwelling`) before scaling. This models *summing*
+  that many independent dwellings' energy use into one total. Assuming dwelling-to-dwelling energy use is
+  roughly independent (a simplification -- real units in the same building share climate/construction/
+  systems and are therefore correlated, so this likely *understates* true uncertainty somewhat), the mean
+  scales linearly (`mean * dwelling_count`) but the standard deviation scales by `sqrt(dwelling_count)`
+  (summing N i.i.d. random variables), so a 1000-unit building's *relative* uncertainty is much tighter than
+  any single unit's. Every ResStock result reports *both* the resolved dwelling count and its equivalent
+  square footage (whichever wasn't given directly is estimated from the sample's average dwelling size), and
+  labels the count "units" for multifamily building types or "homes" for single-family/mobile home types.
+  `target_units` is rejected for ComStock components, which have no per-dwelling metadata to convert from.
 
 A `fraction` component (e.g. "office is 20% of the total mixed-use floor area") has no size of its own to
 scale by -- it's resolved against the *other* components' resolved square footage: given every non-fraction
-component's resolved square footage (`target_sqft` directly, or `target_units * avg_sqft_per_unit` for a
-unit-scaled component), the implied total floor area is
+component's resolved square footage (`target_sqft` directly, or `target_units * avg_sqft_per_dwelling` for a
+unit-scaled ResStock component), the implied total floor area is
 `anchor_sqft / (1 - sum_of_fractions)`, and each fraction component's resolved square footage is
 `fraction * total_sqft`. At least one non-fraction (anchor) component is required to resolve any fractions.
+`fraction` sizing makes most sense for components that genuinely share a building envelope (e.g. ground-floor
+retail under apartments, or an office portion of a mixed-use tower); it's a poor fit for ResStock's
+single-family/mobile-home types, which represent whole standalone structures rather than a floor-area share
+of something larger -- see `_dwelling_count_label()` below, which flags this case with a warning.
 
 Per-component and combined (portfolio-total) results assume independence *between* components (e.g. an
 office component's energy use is uncorrelated with a multifamily component's), so combined variance is the
@@ -79,8 +91,9 @@ class PortfolioComponent:
     target_sqft: float | None = None
     """Absolute target square footage for this component (e.g. a 30,000 sqft office building)."""
     target_units: float | None = None
-    """Absolute target dwelling-unit count for this component (e.g. 1000 apartment units). Only meaningful
-    for a ResStock component, since each ResStock metadata row is already one simulated dwelling unit."""
+    """Absolute target dwelling count for this component (e.g. 1000 apartment units, or 40 single-family
+    homes). Only valid for a ResStock component, since each ResStock metadata row is already one simulated
+    dwelling unit/home; ComStock has no per-dwelling metadata to size by count."""
     fraction: float | None = None
     """This component's share, in (0, 1), of the *total* portfolio's floor area -- resolved against the
     other components' resolved square footage (see module docstring). Requires at least one other
@@ -99,6 +112,11 @@ class PortfolioComponent:
             raise ValueError(
                 f"PortfolioComponent for building_type={self.building_type!r} must set exactly one of "
                 f"target_sqft, target_units, or fraction; got {set_modes or 'none'}."
+            )
+        if self.target_units is not None and normalized_product != "resstock":
+            raise ValueError(
+                f"PortfolioComponent for building_type={self.building_type!r} sets target_units, but target_units is only "
+                "valid for resstock components (ComStock has no per-dwelling metadata to size by count) -- use target_sqft instead."
             )
         if self.target_sqft is not None and self.target_sqft <= 0:
             raise ValueError(f"PortfolioComponent target_sqft must be > 0, got {self.target_sqft}")
@@ -147,9 +165,14 @@ class ComponentEstimate:
     sample_size: int
     avg_sqft: float | None
     resolved_target_sqft: float | None
-    """This component's resolved absolute square footage. Set for "sqft" and "fraction" sizing modes;
-    `None` for "units" mode (which scales by unit count directly, not floor area)."""
+    """This component's resolved (or, for a ResStock component, *estimated* -- see `dwelling_count_label`)
+    absolute square footage."""
     resolved_target_units: float | None
+    """This component's resolved dwelling count. Always set for ResStock components (directly from
+    `target_units`, or estimated from `target_sqft`/`fraction` via the sample's average dwelling size);
+    always `None` for ComStock components, which have no per-dwelling metadata to estimate a count from."""
+    dwelling_count_label: str | None
+    """"units" or "homes" for a ResStock component (see module docstring); `None` for ComStock."""
     metrics: dict[str, MetricStats]
     warnings: list[str] = field(default_factory=list)
 
@@ -206,6 +229,14 @@ def _find_sqft_column(columns: pd.Index) -> str | None:
         if column == "in.sqft" or column.startswith("in.sqft.."):
             return str(column)
     return None
+
+
+def _dwelling_count_label(building_type: str) -> str:
+    """Return "units" for a ResStock multifamily building type, or "homes" for a standalone
+    single-family/mobile-home type -- every ResStock metadata row is one simulated dwelling either way (see
+    module docstring), but the natural way to describe a count of them differs.
+    """
+    return "units" if "Multi-Family" in building_type else "homes"
 
 
 def _resolve_metric_columns(columns: pd.Index, requested: list[str]) -> tuple[dict[str, str], list[str]]:
@@ -356,20 +387,47 @@ def estimate_portfolio_energy(
         component_warnings: list[str] = []
         resolved_target_sqft: float | None = None
         resolved_target_units: float | None = None
+        dwelling_count_label: str | None = None
 
-        if component.target_units is not None:
-            resolved_target_units = component.target_units
-            scale_mean = component.target_units
-            scale_std = math.sqrt(component.target_units)
-            units_column = next((c for c in metadata.columns if c.startswith("in.geometry_building_number_units_mf")), None)
-            if units_column is not None:
-                observed = pd.to_numeric(metadata[units_column], errors="coerce").dropna()
-                if not observed.empty and not (observed.min() <= component.target_units <= observed.max()):
-                    component_warnings.append(
-                        f"({component.product}, {component.building_type}): target_units={component.target_units:,.0f} is outside the "
-                        f"{observed.min():,.0f}-{observed.max():,.0f} unit range observed in sampled buildings of this type -- "
-                        "results are extrapolated beyond the underlying data."
-                    )
+        if component.product.strip().lower() == "resstock":
+            # ResStock rows are always one independent dwelling (apartment unit or standalone home), so
+            # sizing is fundamentally a dwelling *count* -- even a target_sqft/fraction request is converted
+            # to an equivalent count via the sample's average dwelling size, and both the resolved count and
+            # its equivalent square footage are reported regardless of which one the caller provided.
+            if not avg_sqft:
+                raise ValueError(f"Could not determine floor area for component ({component.product}, {component.building_type}) to scale.")
+            if component.target_units is not None:
+                dwelling_count = component.target_units
+            elif component.target_sqft is not None:
+                dwelling_count = component.target_sqft / avg_sqft
+            elif component.fraction is not None:
+                dwelling_count = (component.fraction * total_sqft) / avg_sqft
+            else:
+                # Unreachable: __post_init__ guarantees exactly one of target_sqft/target_units/fraction is set.
+                raise ValueError(f"Component ({component.product}, {component.building_type}) has no resolvable sizing.")
+
+            resolved_target_units = dwelling_count
+            resolved_target_sqft = dwelling_count * avg_sqft
+            dwelling_count_label = _dwelling_count_label(component.building_type)
+            scale_mean = dwelling_count
+            scale_std = math.sqrt(dwelling_count)
+
+            if dwelling_count_label == "units":
+                units_column = next((c for c in metadata.columns if c.startswith("in.geometry_building_number_units_mf")), None)
+                if units_column is not None:
+                    observed = pd.to_numeric(metadata[units_column], errors="coerce").dropna()
+                    if not observed.empty and not (observed.min() <= dwelling_count <= observed.max()):
+                        component_warnings.append(
+                            f"({component.product}, {component.building_type}): resolved target of {dwelling_count:,.0f} units is outside "
+                            f"the {observed.min():,.0f}-{observed.max():,.0f} unit range observed in sampled buildings of this type -- "
+                            "results are extrapolated beyond the underlying data."
+                        )
+            if component.sizing_mode == "fraction" and dwelling_count_label == "homes":
+                component_warnings.append(
+                    f"({component.product}, {component.building_type}): sizing a standalone single-family/mobile-home component by "
+                    "fraction-of-floor-area is unusual -- each sampled row is already a whole separate home, not a floor-area share of a "
+                    "shared building. Consider target_units (a home count) instead."
+                )
         else:
             if component.target_sqft is not None:
                 resolved_target_sqft = component.target_sqft
@@ -419,6 +477,7 @@ def estimate_portfolio_energy(
                 avg_sqft=avg_sqft,
                 resolved_target_sqft=resolved_target_sqft,
                 resolved_target_units=resolved_target_units,
+                dwelling_count_label=dwelling_count_label,
                 metrics=metrics,
                 warnings=component_warnings,
             )
