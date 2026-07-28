@@ -87,14 +87,31 @@ ResStockProcessor.data_dictionary.result_variable_names
 
 Upgrade package ids are release-specific, so they are grouped by release in both the Markdown/JSON dictionary and the Python API.
 
+## ENERGY STAR Building Type Crosswalk
+
+The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NREL/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
+
+```python
+from buildstock_processor import map_energy_star_property_type, energy_star_property_types_for_buildstock_type
+
+mapping = map_energy_star_property_type("Bank Branch")
+# EnergyStarMapping(energy_star_property_type='Bank Branch', buildstock_product='comstock',
+#                    buildstock_building_type='SmallOffice', match_quality='approximate', notes='...')
+
+energy_star_property_types_for_buildstock_type("comstock", "SmallOffice")
+# ('Bank Branch', 'Financial Office', 'Fire Station', ...) -- reverse lookup
+```
+
 ## Package Layout
 
 ```text
 src/buildstock_processor/
-|-- __init__.py   # public processors and abstract extension types
-|-- _base.py      # BuildStockProcessor ABC and shared workflows
-|-- comstock.py   # ComStock implementation and releases
-`-- resstock.py   # ResStock implementation and releases
+|-- __init__.py                  # public processors and abstract extension types
+|-- _base.py                     # BuildStockProcessor ABC and shared workflows
+|-- comstock.py                  # ComStock implementation and releases
+|-- resstock.py                  # ResStock implementation and releases
+|-- data_dictionary.py           # packaged building-type/result-variable/upgrade-package dictionary
+`-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
 ```
 
 ## ComStockProcessor Class

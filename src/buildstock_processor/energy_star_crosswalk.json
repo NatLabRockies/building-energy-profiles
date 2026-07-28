@@ -1,0 +1,590 @@
+[
+  {
+    "energy_star_property_type": "Adult Education",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SecondarySchool",
+    "match_quality": "approximate",
+    "notes": "Adult-education classroom space modeled on ComStock's secondary-school prototype; no dedicated adult-education building type exists."
+  },
+  {
+    "energy_star_property_type": "Ambulatory Surgical Center",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Outpatient",
+    "match_quality": "approximate",
+    "notes": "Outpatient surgical care is close to ComStock's outpatient healthcare prototype, though surgical centers have higher plug/HVAC loads."
+  },
+  {
+    "energy_star_property_type": "Bank Branch",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Small commercial office/teller space; ComStock has no dedicated bank prototype."
+  },
+  {
+    "energy_star_property_type": "Bar/Nightclub",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "FullServiceRestaurant",
+    "match_quality": "approximate",
+    "notes": "Food/beverage service with extended evening hours; closest match is the full-service restaurant prototype."
+  },
+  {
+    "energy_star_property_type": "Barracks",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Multi-Family with 5+ Units",
+    "match_quality": "approximate",
+    "notes": "Military barracks are dormitory-style multi-occupant housing, closest to ResStock's larger multifamily category."
+  },
+  {
+    "energy_star_property_type": "Bowling Alley",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large single-story recreational space; no bowling/entertainment prototype exists in ComStock."
+  },
+  {
+    "energy_star_property_type": "Casino",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan gaming floor; no casino prototype exists, so the standalone-retail prototype is used as a rough proxy."
+  },
+  {
+    "energy_star_property_type": "College/University",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SecondarySchool",
+    "match_quality": "approximate",
+    "notes": "ComStock has no higher-education prototype; the secondary-school prototype is the closest available large academic building."
+  },
+  {
+    "energy_star_property_type": "Convenience Store with Gas Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Small-format retail; ComStock has no convenience-store-with-fuel prototype."
+  },
+  {
+    "energy_star_property_type": "Convenience Store without Gas Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Small-format retail store."
+  },
+  {
+    "energy_star_property_type": "Convention Center",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan assembly space; no convention-center prototype exists in ComStock."
+  },
+  {
+    "energy_star_property_type": "Courthouse",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "MediumOffice",
+    "match_quality": "approximate",
+    "notes": "Government office/administrative building; no courthouse-specific prototype exists."
+  },
+  {
+    "energy_star_property_type": "Data Center",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "No data-center prototype exists in ComStock; actual data centers have far higher plug/cooling loads than the warehouse prototype implies."
+  },
+  {
+    "energy_star_property_type": "Distribution Center",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "exact",
+    "notes": "Distribution centers are warehouses."
+  },
+  {
+    "energy_star_property_type": "Drinking Water Treatment & Distribution",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Industrial/utility building with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Enclosed Mall",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "approximate",
+    "notes": "ComStock's strip-mall prototype is the closest available retail-complex type; enclosed malls are typically larger and centrally conditioned."
+  },
+  {
+    "energy_star_property_type": "Energy/Power Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Industrial/utility building with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Fast Food Restaurant",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "QuickServiceRestaurant",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's quick-service restaurant prototype."
+  },
+  {
+    "energy_star_property_type": "Financial Office",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Small commercial office space."
+  },
+  {
+    "energy_star_property_type": "Fire Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Small institutional/office-like building; no fire-station prototype exists."
+  },
+  {
+    "energy_star_property_type": "Fitness Center/Health Club/Gym",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan recreational retail space; no gym prototype exists."
+  },
+  {
+    "energy_star_property_type": "Food Sales",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Grocery",
+    "match_quality": "approximate",
+    "notes": "General food-retail category; closest match is ComStock's grocery prototype."
+  },
+  {
+    "energy_star_property_type": "Food Service",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "FullServiceRestaurant",
+    "match_quality": "approximate",
+    "notes": "General food-service category; closest match is ComStock's full-service restaurant prototype."
+  },
+  {
+    "energy_star_property_type": "Hospital (General Medical & Surgical)",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Hospital",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's hospital prototype."
+  },
+  {
+    "energy_star_property_type": "Hotel",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallHotel",
+    "match_quality": "approximate",
+    "notes": "Generic hotel type with no size/service-level indicator; SmallHotel (limited-service) represents the majority of the US hotel stock by count. Use LargeHotel for known full-service/larger properties."
+  },
+  {
+    "energy_star_property_type": "Ice/Curling Rink",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Large single-volume specialized recreational space; no rink prototype exists."
+  },
+  {
+    "energy_star_property_type": "Indoor Arena",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Large single-volume assembly space; no arena prototype exists."
+  },
+  {
+    "energy_star_property_type": "K-12 School",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "PrimarySchool",
+    "match_quality": "approximate",
+    "notes": "Generic K-12 designation spans both ComStock's primary- and secondary-school prototypes; PrimarySchool is used as the default. Use SecondarySchool for known middle/high schools."
+  },
+  {
+    "energy_star_property_type": "Laboratory",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "LargeOffice",
+    "match_quality": "approximate",
+    "notes": "High plug-load research space; ComStock has no laboratory prototype, so the large-office prototype is used as a rough proxy."
+  },
+  {
+    "energy_star_property_type": "Library",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "MediumOffice",
+    "match_quality": "approximate",
+    "notes": "Public institutional building with reading rooms and staff offices; no library prototype exists in ComStock."
+  },
+  {
+    "energy_star_property_type": "Lifestyle Center",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "approximate",
+    "notes": "Open-air, multi-tenant retail complex; closest match is ComStock's strip-mall prototype."
+  },
+  {
+    "energy_star_property_type": "Mailing Center/Post Office",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Small commercial service building."
+  },
+  {
+    "energy_star_property_type": "Manufacturing/Industrial Plant",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "No manufacturing/industrial prototype exists in ComStock; actual process loads can differ substantially from the warehouse prototype."
+  },
+  {
+    "energy_star_property_type": "Medical Office",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Outpatient",
+    "match_quality": "approximate",
+    "notes": "Medical offices are effectively outpatient clinics."
+  },
+  {
+    "energy_star_property_type": "Mixed Use Property",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "MediumOffice",
+    "match_quality": "approximate",
+    "notes": "No mixed-use prototype exists; MediumOffice is used as a generic default anchor use. Prefer mapping the property's dominant use directly when known."
+  },
+  {
+    "energy_star_property_type": "Movie Theater",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan entertainment retail space; no theater prototype exists."
+  },
+  {
+    "energy_star_property_type": "Multifamily Housing",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Multi-Family with 5+ Units",
+    "match_quality": "exact",
+    "notes": "ENERGY STAR's multifamily housing property type is designed for buildings with 5+ residential units, matching ResStock's category directly."
+  },
+  {
+    "energy_star_property_type": "Museum",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Public assembly/exhibition space; no museum prototype exists."
+  },
+  {
+    "energy_star_property_type": "Non-Refrigerated Warehouse",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's warehouse prototype."
+  },
+  {
+    "energy_star_property_type": "Office",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "MediumOffice",
+    "match_quality": "approximate",
+    "notes": "Generic office type with no size indicator; MediumOffice is used as the default. Use SmallOffice/LargeOffice when building size is known."
+  },
+  {
+    "energy_star_property_type": "Other",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Generic catch-all category with no identifiable building use."
+  },
+  {
+    "energy_star_property_type": "Other - Education",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SecondarySchool",
+    "match_quality": "approximate",
+    "notes": "Generic education catch-all; closest match is ComStock's secondary-school prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Entertainment/Public Assembly",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Generic entertainment/assembly catch-all with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Lodging/Residential",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Multi-Family with 5+ Units",
+    "match_quality": "approximate",
+    "notes": "Generic lodging/residential catch-all; mapped to ResStock's multifamily category as a residential-leaning default."
+  },
+  {
+    "energy_star_property_type": "Other - Public Service",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Generic public-service catch-all; closest match is a small office/administrative building."
+  },
+  {
+    "energy_star_property_type": "Other - Recreation",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Generic recreation catch-all with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Restaurant/Bar",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "FullServiceRestaurant",
+    "match_quality": "approximate",
+    "notes": "Generic food/beverage catch-all; closest match is ComStock's full-service restaurant prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Retail/Mall",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "approximate",
+    "notes": "Generic retail catch-all; closest match is ComStock's strip-mall prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Services",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Generic services catch-all; closest match is a small office/commercial-service building."
+  },
+  {
+    "energy_star_property_type": "Other - Specialty Hospital",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Hospital",
+    "match_quality": "approximate",
+    "notes": "Specialty hospitals share ComStock's general hospital prototype's 24/7 institutional occupancy pattern."
+  },
+  {
+    "energy_star_property_type": "Other - Stadium",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Open-air or semi-conditioned assembly structure with no representative ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Technology/Science",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "LargeOffice",
+    "match_quality": "approximate",
+    "notes": "High plug-load office/lab hybrid; closest match is ComStock's large-office prototype."
+  },
+  {
+    "energy_star_property_type": "Other - Utility",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Generic utility/industrial catch-all with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Outpatient Rehabilitation/Physical Therapy",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Outpatient",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's outpatient healthcare prototype."
+  },
+  {
+    "energy_star_property_type": "Parking",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Unconditioned parking structures aren't represented by any ComStock or ResStock building type."
+  },
+  {
+    "energy_star_property_type": "Performing Arts",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Public assembly/auditorium space; no performing-arts prototype exists."
+  },
+  {
+    "energy_star_property_type": "Personal Services (Health/Beauty, Dry Cleaning, etc)",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "approximate",
+    "notes": "Small service-retail space typically found in strip-mall-style buildings."
+  },
+  {
+    "energy_star_property_type": "Police Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SmallOffice",
+    "match_quality": "approximate",
+    "notes": "Small institutional/office-like building; no police-station prototype exists."
+  },
+  {
+    "energy_star_property_type": "Pre-school/Daycare",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "PrimarySchool",
+    "match_quality": "approximate",
+    "notes": "Early-childhood instructional space; closest match is ComStock's primary-school prototype."
+  },
+  {
+    "energy_star_property_type": "Prison/Incarceration",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Hospital",
+    "match_quality": "approximate",
+    "notes": "24/7 institutional occupancy with high security and continuous operation, similar in schedule/load pattern to ComStock's hospital prototype; no detention-facility prototype exists."
+  },
+  {
+    "energy_star_property_type": "Refrigerated Warehouse",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "ComStock's single warehouse prototype doesn't model refrigeration loads, which are substantial for this property type."
+  },
+  {
+    "energy_star_property_type": "Repair Services (Vehicle, Shoe, Locksmith, etc.)",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "approximate",
+    "notes": "Small service-retail space typically found in strip-mall-style buildings."
+  },
+  {
+    "energy_star_property_type": "Residence Hall/Dormitory",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Multi-Family with 5+ Units",
+    "match_quality": "approximate",
+    "notes": "Dormitories are multi-occupant residential buildings, closest to ResStock's larger multifamily category."
+  },
+  {
+    "energy_star_property_type": "Residential Care Facility",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Hospital",
+    "match_quality": "approximate",
+    "notes": "24/7 medical/custodial care occupancy pattern, similar to ComStock's hospital prototype; no dedicated residential-care prototype exists."
+  },
+  {
+    "energy_star_property_type": "Restaurant",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "FullServiceRestaurant",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's full-service restaurant prototype."
+  },
+  {
+    "energy_star_property_type": "Retail Store",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's standalone-retail prototype."
+  },
+  {
+    "energy_star_property_type": "Self-Storage Facility",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "exact",
+    "notes": "Low-load storage building, matching ComStock's warehouse prototype well."
+  },
+  {
+    "energy_star_property_type": "Senior Living Community",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Multi-Family with 5+ Units",
+    "match_quality": "approximate",
+    "notes": "Congregate residential housing, closest to ResStock's larger multifamily category; does not capture assisted-living-specific loads."
+  },
+  {
+    "energy_star_property_type": "Single Family Home",
+    "buildstock_product": "resstock",
+    "buildstock_building_type": "Single-Family Detached",
+    "match_quality": "exact",
+    "notes": "Direct match to ResStock's single-family detached category."
+  },
+  {
+    "energy_star_property_type": "Social/Meeting Hall",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Public assembly space; no meeting-hall prototype exists."
+  },
+  {
+    "energy_star_property_type": "Stadium (Closed)",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Large enclosed single-volume assembly space; no stadium prototype exists in ComStock."
+  },
+  {
+    "energy_star_property_type": "Stadium (Open)",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Open-air structure not represented by any conditioned ComStock or ResStock building type."
+  },
+  {
+    "energy_star_property_type": "Strip Mall",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStripmall",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's strip-mall prototype."
+  },
+  {
+    "energy_star_property_type": "Supermarket/Grocery Store",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Grocery",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's grocery prototype."
+  },
+  {
+    "energy_star_property_type": "Swimming Pool",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Specialized aquatic facility not represented by any ComStock or ResStock building type."
+  },
+  {
+    "energy_star_property_type": "Transportation Terminal/Station",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan public circulation space; no terminal/station prototype exists."
+  },
+  {
+    "energy_star_property_type": "Urgent Care/Clinic/Other Outpatient",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Outpatient",
+    "match_quality": "exact",
+    "notes": "Direct match to ComStock's outpatient healthcare prototype."
+  },
+  {
+    "energy_star_property_type": "Vehicle Dealership",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Showroom retail space; no dealership prototype exists."
+  },
+  {
+    "energy_star_property_type": "Veterinary Office",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Outpatient",
+    "match_quality": "approximate",
+    "notes": "Clinic-style medical office, closest to ComStock's outpatient prototype."
+  },
+  {
+    "energy_star_property_type": "Vocational School",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "SecondarySchool",
+    "match_quality": "approximate",
+    "notes": "Trade/vocational instructional space; closest match is ComStock's secondary-school prototype."
+  },
+  {
+    "energy_star_property_type": "Wastewater Treatment Plant",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Warehouse",
+    "match_quality": "approximate",
+    "notes": "Industrial/utility building with no dedicated ComStock prototype."
+  },
+  {
+    "energy_star_property_type": "Wholesale Club/Supercenter",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "Grocery",
+    "match_quality": "approximate",
+    "notes": "Large-format grocery/general-merchandise store; closest match is ComStock's grocery prototype, though supercenters are typically larger."
+  },
+  {
+    "energy_star_property_type": "Worship Facility",
+    "buildstock_product": "comstock",
+    "buildstock_building_type": "RetailStandalone",
+    "match_quality": "approximate",
+    "notes": "Large open-plan assembly space; no worship-facility prototype exists in ComStock."
+  },
+  {
+    "energy_star_property_type": "Zoo",
+    "buildstock_product": null,
+    "buildstock_building_type": null,
+    "match_quality": "unmapped",
+    "notes": "Primarily outdoor specialized facility not represented by any ComStock or ResStock building type."
+  }
+]
