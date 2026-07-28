@@ -17,6 +17,13 @@ from .energy_star_crosswalk import (
     list_energy_star_property_types,
     map_energy_star_property_type,
 )
+from .ensemble import (
+    EnsembleBuildingType,
+    EnsembleComponent,
+    combine_ensemble_time_series,
+    normalize_time_series_columns,
+    pull_ensemble_time_series,
+)
 from .resstock import ResStockProcessor
 
 __all__ = [
@@ -27,13 +34,18 @@ __all__ = [
     "BuildStockRelease",
     "ComStockProcessor",
     "EnergyStarMapping",
+    "EnsembleBuildingType",
+    "EnsembleComponent",
     "MetadataPartition",
     "ResStockProcessor",
     "ResultVariable",
+    "combine_ensemble_time_series",
     "data_dictionary",
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
     "list_energy_star_property_types",
     "map_energy_star_property_type",
+    "normalize_time_series_columns",
+    "pull_ensemble_time_series",
     "result_variables_from_columns",
 ]

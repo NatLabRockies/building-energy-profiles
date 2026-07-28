@@ -45,6 +45,7 @@ source-include = [
     "docs/**",
     "01_data_sampling_example.ipynb",
     "02_washington_dc_stock_analysis.ipynb",
+    "03_ensemble_building_example.ipynb",
 ]
 
 [tool.mypy]
