@@ -164,6 +164,29 @@ def _sqft_bounds_warning(
     )
 
 
+def _sqft_scaling_note(component: CompositeComponentSpec, sample_sqft: float, target_sqft: float) -> str | None:
+    """Inform the user when the specific representative building actually modeled for this component isn't
+    the same size as their requested `target_sqft` -- e.g. "you asked for 40,000 sqft, but the closest
+    available modeled building is 46,000 sqft, so results are scaled by 0.87x to represent your smaller
+    target". Time series results are always scaled to `target_sqft` regardless (see
+    `find_nearest_sqft_bldg_id`), so this is purely informational transparency about *how much* scaling was
+    applied, distinct from `_sqft_bounds_warning`'s "this extrapolates beyond the data" concern. Returns
+    `None` for a near-exact match (within 1%) to avoid noise.
+    """
+    if not sample_sqft or not target_sqft:
+        return None
+    relative_diff = abs(target_sqft - sample_sqft) / sample_sqft
+    if relative_diff < 0.01:
+        return None
+    label = component.label or component.building_type
+    scale = target_sqft / sample_sqft
+    direction = "smaller than" if target_sqft < sample_sqft else "larger than"
+    return (
+        f"{label} ({component.product}): requested {target_sqft:,.0f} sqft is {direction} the closest available modeled "
+        f"building ({sample_sqft:,.0f} sqft) -- results are scaled by {scale:.2f}x to represent your requested size."
+    )
+
+
 def list_energy_star_types() -> list[EnergyStarTypeInfo]:
     return [
         EnergyStarTypeInfo(
@@ -521,6 +544,9 @@ def _pull_timeseries(
                     warning = _sqft_bounds_warning(component, metadata, sqft_column, target_sqft_map[key])
                     if warning:
                         warnings.append(warning)
+                    note = _sqft_scaling_note(component, sample_sqft, target_sqft_map[key])
+                    if note:
+                        warnings.append(note)
 
         ts_dir = processor.base_dir / "timeseries" / f"upgrade_{effective_upgrade}"
         ts_dir.mkdir(parents=True, exist_ok=True)
@@ -568,6 +594,22 @@ def _pull_timeseries(
             warning = _sqft_bounds_warning(component, metadata, sqft_column, target_sqft_map[key])
             if warning:
                 warnings.append(warning)
+
+            # Mirror pull_composite_time_series()'s own building-selection precedence (an explicit/
+            # persisted bldg_id pin, else the nearest-sqft match) so this note describes the building it
+            # will actually use.
+            if sqft_column:
+                pinned_bldg_id = (bldg_ids or {}).get(key)
+                if pinned_bldg_id is not None:
+                    pinned_row = metadata[metadata["bldg_id"] == pinned_bldg_id]
+                    component_sqft = float(pinned_row[sqft_column].iloc[0]) if not pinned_row.empty else None
+                else:
+                    nearest_bldg_id = find_nearest_sqft_bldg_id(metadata, target_sqft_map[key], sqft_column=sqft_column)
+                    component_sqft = float(metadata.loc[metadata["bldg_id"] == nearest_bldg_id, sqft_column].iloc[0])
+                if component_sqft is not None:
+                    note = _sqft_scaling_note(component, component_sqft, target_sqft_map[key])
+                    if note:
+                        warnings.append(note)
 
     upgrade_overrides: dict[tuple[str, str], str] | None = (
         {(c.product, c.building_type): _effective_upgrade(c.product) for c in components} if upgrade_product is not None else None

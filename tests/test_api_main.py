@@ -266,8 +266,10 @@ class TestAppEndpointsIntegration:
 
         assert response.status_code == 200
         body = response.json()
-        assert len(body["warnings"]) == 1
-        assert "SmallOffice" in body["warnings"][0]
+        # An extreme (1 sqft) target triggers both the out-of-bounds warning and the scaling-note message
+        # (the modeled building is nowhere near 1 sqft, so the scale factor is reported too).
+        assert any("outside" in w and "SmallOffice" in w for w in body["warnings"])
+        assert any("scaled by" in w and "SmallOffice" in w for w in body["warnings"])
 
     @pytest.mark.integration
     def test_timeseries_composite_multi_component_sqft_mode_scales_linearly(self, client: TestClient, tmp_path: Path) -> None:
@@ -301,8 +303,9 @@ class TestAppEndpointsIntegration:
 
     @pytest.mark.integration
     def test_timeseries_composite_multi_component_sqft_mode_warns_out_of_bounds_for_one_component(self, client: TestClient) -> None:
-        """Only the out-of-bounds component should generate a warning -- a reasonably-sized component
-        alongside it shouldn't."""
+        """Only the out-of-bounds component should generate the "outside the ... range" bounds warning -- a
+        reasonably-sized component alongside it shouldn't (though either may still get a scaling note if
+        its resolved building isn't an exact size match)."""
         response = client.post(
             "/api/timeseries/composite",
             json={
@@ -317,9 +320,10 @@ class TestAppEndpointsIntegration:
 
         assert response.status_code == 200
         body = response.json()
-        assert len(body["warnings"]) == 1
-        assert "SmallOffice" in body["warnings"][0]
-        assert "RetailStandalone" not in body["warnings"][0]
+        bounds_warnings = [w for w in body["warnings"] if "outside" in w]
+        assert len(bounds_warnings) == 1
+        assert "SmallOffice" in bounds_warnings[0]
+        assert "RetailStandalone" not in bounds_warnings[0]
 
     @pytest.mark.integration
     def test_timeseries_composite_single_component_product_prefixed_upgrade_matches_bare(self, client: TestClient) -> None:
@@ -598,9 +602,13 @@ class TestAppEndpointsIntegration:
 
         assert response.status_code == 200
         lines = response.text.splitlines()
-        assert any(line.startswith("#WARNING:") and "SmallOffice" in line for line in lines)
-        # The extra warning comment line pushes the matrix declaration one line further down.
-        assert lines[8].startswith("double tab1(")
+        warning_lines = [line for line in lines if line.startswith("#WARNING:")]
+        # An extreme (1 sqft) target triggers both the out-of-bounds warning and the scaling-note message.
+        assert any("outside" in line and "SmallOffice" in line for line in warning_lines)
+        assert any("scaled by" in line and "SmallOffice" in line for line in warning_lines)
+        # Each warning comment line pushes the matrix declaration further down.
+        matrix_line_index = 7 + len(warning_lines)
+        assert lines[matrix_line_index].startswith("double tab1(")
 
     @pytest.mark.integration
     def test_service_error_returns_400(self, client: TestClient) -> None:
