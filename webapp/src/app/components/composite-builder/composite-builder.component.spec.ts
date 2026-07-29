@@ -28,8 +28,18 @@ describe('CompositeBuilderComponent', () => {
     const fixture = TestBed.createComponent(CompositeBuilderComponent);
     const component = fixture.componentInstance;
     fixture.detectChanges();
-    // Ignore the ngOnInit ENERGY STAR type list request -- irrelevant to the rebalancing logic under test.
-    httpMock.expectOne(() => true).flush([]);
+    // ngOnInit fires 3 requests (ENERGY STAR types, available states, available counties for the default
+    // state) -- irrelevant to the rebalancing logic under test, so just flush each with an empty/minimal
+    // response matching its endpoint.
+    for (const req of httpMock.match(() => true)) {
+      if (req.request.url.includes('/locations/states')) {
+        req.flush({ ok: true, product: 'comstock', states: [] });
+      } else if (req.request.url.includes('/locations/counties')) {
+        req.flush({ ok: true, product: 'comstock', state: 'DE', counties: [], note: '' });
+      } else {
+        req.flush([]);
+      }
+    }
     return component;
   }
 

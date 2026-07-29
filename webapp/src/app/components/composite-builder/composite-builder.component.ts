@@ -29,6 +29,17 @@ export class CompositeBuilderComponent implements OnInit {
    * combined size instead of just a relative share). */
   mode = signal<'fraction' | 'sqft'>('fraction');
 
+  /** States with published BuildStock metadata (comstock/resstock cover the same 50 states + DC, so
+   * "comstock" is used as the reference product for this list). */
+  states = signal<string[]>([]);
+  loadingStates = signal(false);
+  /** Counties actually published for the selected state -- refetched whenever `state` changes. Not every
+   * county in a state is guaranteed to have its own published sample, so "All" is always offered first as
+   * a safe fallback regardless of what this list contains (see countiesNote). */
+  counties = signal<string[]>([]);
+  loadingCounties = signal(false);
+  countiesNote = signal<string | null>(null);
+
   form: FormGroup;
 
   constructor(
@@ -48,6 +59,47 @@ export class CompositeBuilderComponent implements OnInit {
     this.api.getEnergyStarTypes().subscribe({
       next: (types) => this.energyStarTypes.set(types),
       error: () => this.errorMessage.set('Failed to load the ENERGY STAR property type list from the API.'),
+    });
+
+    this.loadingStates.set(true);
+    this.api.getAvailableStates('comstock').subscribe({
+      next: (result) => {
+        this.states.set(result.states);
+        this.loadingStates.set(false);
+      },
+      error: () => {
+        this.errorMessage.set('Failed to load the list of available states from the API.');
+        this.loadingStates.set(false);
+      },
+    });
+
+    this.loadCounties(this.form.get('state')!.value);
+    this.form.get('state')!.valueChanges.subscribe((state: string) => {
+      // A new state's previously-selected county almost certainly doesn't apply -- reset to "All" (always
+      // a safe choice) before the new county list arrives.
+      this.form.get('countyName')?.setValue('All', { emitEvent: false });
+      this.loadCounties(state);
+    });
+  }
+
+  private loadCounties(state: string): void {
+    if (!state || state.length !== 2) {
+      this.counties.set([]);
+      this.countiesNote.set(null);
+      return;
+    }
+    this.loadingCounties.set(true);
+    this.api.getAvailableCounties('comstock', state.toUpperCase()).subscribe({
+      next: (result) => {
+        this.counties.set(result.counties);
+        this.countiesNote.set(result.note);
+        this.loadingCounties.set(false);
+      },
+      error: () => {
+        this.counties.set([]);
+        this.countiesNote.set(null);
+        this.loadingCounties.set(false);
+      },
     });
   }
 

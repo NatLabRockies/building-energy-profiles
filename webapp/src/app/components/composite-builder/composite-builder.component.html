@@ -55,13 +55,31 @@
     <div class="scope-fields">
       <label>
         State
-        <input type="text" formControlName="state" maxlength="2" placeholder="DE" class="state-input" />
+        <select formControlName="state" class="state-input">
+          @if (loadingStates()) {
+            <option value="">Loading&hellip;</option>
+          }
+          @for (s of states(); track s) {
+            <option [value]="s">{{ s }}</option>
+          }
+        </select>
       </label>
       <label>
-        County (optional)
-        <input type="text" formControlName="countyName" placeholder="All" />
+        County
+        <select formControlName="countyName">
+          <option value="All">All (recommended default -- see note below)</option>
+          @for (c of counties(); track c) {
+            <option [value]="c">{{ c }}</option>
+          }
+        </select>
+        @if (loadingCounties()) {
+          <span class="loading-hint">Loading counties&hellip;</span>
+        }
       </label>
     </div>
+    @if (countiesNote()) {
+      <p class="counties-note">&#8505;&#65039; {{ countiesNote() }}</p>
+    }
 
     <button type="submit" class="primary" [disabled]="loading()">
       {{ loading() ? 'Generating...' : 'Generate Composite Model' }}
