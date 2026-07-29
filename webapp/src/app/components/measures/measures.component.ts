@@ -68,7 +68,9 @@ export class MeasuresComponent implements OnInit {
     plugins: { legend: { display: true } },
     scales: {
       x: { title: { display: true, text: 'Hours, sorted descending' } },
-      y: { title: { display: true, text: 'kWh' } },
+      // Hourly-resampled energy (kWh per hour) is numerically equal to average power (kW) over that
+      // hour, and a load *duration* curve is conventionally a power curve, not an energy curve.
+      y: { title: { display: true, text: 'kW' } },
     },
   };
   readonly stackedBarOptions: ChartConfiguration<'bar'>['options'] = {
