@@ -7,7 +7,7 @@ categories (ResStock, 5 types). Several ENERGY STAR property types have no close
 all (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures).
 
 This crosswalk is a best-effort approximation authored for buildstock_processor -- it is not an official
-NREL or EPA publication. Each entry records a `match_quality` ("exact", "approximate", or "unmapped") and
+NLR or EPA publication. Each entry records a `match_quality` ("exact", "approximate", or "unmapped") and
 `notes` explaining the reasoning, so callers can decide whether an approximate match is good enough for
 their use case. The dictionary is stored as plain JSON alongside this module so tools can parse it without
 importing Python, while this module exposes a small Python-friendly lookup API for interactive use.

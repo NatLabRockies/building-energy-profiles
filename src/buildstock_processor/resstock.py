@@ -1,7 +1,7 @@
 """
 ResStock Processor - A tool to download and process ResStock data.
 
-This module provides utilities for downloading metadata and time series data from NREL's ResStock
+This module provides utilities for downloading metadata and time series data from NLR's ResStock
 dataset hosted on AWS S3, building on the shared `BuildStockProcessor` infrastructure also used by
 `ComStockProcessor`.
 
