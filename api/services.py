@@ -40,6 +40,7 @@ from buildstock_processor import location
 from buildstock_processor.composite import (
     CompositeBuildingType,
     CompositeComponent,
+    find_nearest_sqft_bldg_id,
     normalize_time_series_columns,
     pull_composite_time_series,
 )
@@ -176,13 +177,40 @@ def list_energy_star_types() -> list[EnergyStarTypeInfo]:
     ]
 
 
-def resolve_composite(request: CompositeResolveRequest) -> CompositeResolveResponse:
+def _select_bldg_id_for_sqft(
+    product: str,
+    building_type: str,
+    target_sqft: float,
+    state: str,
+    county_name: str | list[str],
+    settings: Settings,
+    warnings: list[str],
+) -> int | None:
+    """Best-effort lookup of the real sampled building closest in floor area to `target_sqft`, for
+    `resolve_composite()`'s sqft-mode auto-selection. Returns `None` (and appends a warning) instead of
+    raising, so one component's metadata download failing doesn't fail the whole resolve -- that component
+    just falls back to each downstream endpoint's own default building selection.
+    """
+    try:
+        processor = _build_processor(settings.cache_dir, product, state, county_name, building_type, "0", None, None)
+        metadata = processor.process_metadata(save_dir=processor.base_dir)
+        return find_nearest_sqft_bldg_id(metadata, target_sqft)
+    except Exception as exc:
+        warnings.append(f"Could not auto-select a representative building for {building_type} ({product}): {exc}")
+        return None
+
+
+def resolve_composite(request: CompositeResolveRequest, settings: Settings) -> CompositeResolveResponse:
     resolved: list[ResolvedComponent] = []
     unmapped: list[str] = []
+    warnings: list[str] = []
 
     # Schema validation guarantees every component is consistently either all-fraction or all-sqft.
     sqft_mode = any(entry.sqft is not None for entry in request.components)
     total_sqft = sum(entry.sqft or 0.0 for entry in request.components) if sqft_mode else None
+    # Auto-selecting a representative bldg_id needs real metadata, so it's opt-in: only happens in sqft
+    # mode, and only once a state is given (fraction mode has no target size to match a building against).
+    select_bldg_ids = sqft_mode and request.state is not None
 
     for entry in request.components:
         # In sqft mode, `fraction` is derived (share of the total entered sqft, including unmapped
@@ -214,6 +242,24 @@ def resolve_composite(request: CompositeResolveRequest) -> CompositeResolveRespo
             unmapped.append(entry.energy_star_property_type)
             continue
 
+        bldg_id: int | None = None
+        if (
+            select_bldg_ids
+            and entry.sqft is not None
+            and mapping.buildstock_product is not None
+            and mapping.buildstock_building_type is not None
+        ):
+            # request.state is guaranteed non-None here: select_bldg_ids is only True when it was set.
+            bldg_id = _select_bldg_id_for_sqft(
+                mapping.buildstock_product,
+                mapping.buildstock_building_type,
+                entry.sqft,
+                request.state or "",
+                request.county_name,
+                settings,
+                warnings,
+            )
+
         resolved.append(
             ResolvedComponent(
                 energy_star_property_type=entry.energy_star_property_type,
@@ -221,6 +267,7 @@ def resolve_composite(request: CompositeResolveRequest) -> CompositeResolveRespo
                 building_type=mapping.buildstock_building_type,
                 fraction=entry_fraction,
                 sqft=entry.sqft,
+                bldg_id=bldg_id,
                 match_quality=mapping.match_quality,
                 notes=mapping.notes,
             )
@@ -236,6 +283,7 @@ def resolve_composite(request: CompositeResolveRequest) -> CompositeResolveRespo
             building_type=r.building_type,
             fraction=(r.fraction / resolvable_total) if resolvable_total else 0.0,
             sqft=r.sqft,
+            bldg_id=r.bldg_id,
             label=r.energy_star_property_type,
         )
         for r in resolvable_source
@@ -248,6 +296,7 @@ def resolve_composite(request: CompositeResolveRequest) -> CompositeResolveRespo
         unmapped=unmapped,
         total_fraction=sum(r.fraction for r in resolved),
         total_sqft=total_sqft,
+        warnings=warnings,
     )
 
 
@@ -420,7 +469,17 @@ def _pull_timeseries(
     applies that upgrade only to components of that product; every other component is pulled at baseline
     ("0") instead. This lets a single measure's effect be isolated in a mixed composite's time series the
     same way `compare_measures()` already isolates it in the annual aggregates.
+
+    `bldg_ids` (an explicit per-call override) is merged with each component's own persisted
+    `CompositeComponentSpec.bldg_id` (e.g. from `resolve_composite()`'s sqft-mode auto-selection), with
+    `bldg_ids` taking priority for a component set in both -- so a caller doesn't need to re-merge this
+    itself, and every page reusing the same resolved components picks the same building consistently.
     """
+    effective_bldg_ids: dict[tuple[str, str], int] = {
+        (component.product, component.building_type): component.bldg_id for component in components if component.bldg_id is not None
+    }
+    effective_bldg_ids.update(bldg_ids or {})
+    bldg_ids = effective_bldg_ids or None
     target_sqft_map = _target_sqft_map(components)
     upgrade_product, upgrade_id = _parse_measure_selection(upgrade)
 
@@ -448,6 +507,11 @@ def _pull_timeseries(
                 metadata = metadata[metadata["bldg_id"] == sample_bldg_id]
                 if metadata.empty:
                     raise ServiceError(f"bldg_id {sample_bldg_id} not found in metadata for {key}.")
+            elif target_sqft_map is not None:
+                # Pick a real building already close in size to the target, rather than an arbitrary
+                # "first found" one that then gets linearly rescaled -- see find_nearest_sqft_bldg_id().
+                nearest_bldg_id = find_nearest_sqft_bldg_id(metadata, target_sqft_map[key])
+                metadata = metadata[metadata["bldg_id"] == nearest_bldg_id]
             sqft_column = _find_column(metadata.columns, "in.sqft") if target_sqft_map is not None else None
             select_columns = ["bldg_id", "in.state"] + ([sqft_column] if sqft_column else [])
             sample = metadata[select_columns].drop_duplicates().head(1)

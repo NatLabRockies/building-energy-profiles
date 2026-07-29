@@ -14,6 +14,7 @@ from fastapi.testclient import TestClient
 import api.main as main_module
 from api.config import Settings
 from api.main import app
+from buildstock_processor.comstock import ComStockProcessor
 
 
 @pytest.fixture
@@ -95,6 +96,22 @@ class TestAppRoutes:
 
 class TestAppEndpointsIntegration:
     """Real-network tests against a small state (DE) -- mirrors the rest of the repo's integration tests."""
+
+    @pytest.mark.integration
+    def test_composite_resolve_sqft_mode_with_state_auto_selects_bldg_id(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/composite/resolve",
+            json={
+                "components": [{"energy_star_property_type": "Office", "sqft": 45_000}],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert body["resolvable"][0]["bldg_id"] is not None
+        assert body["components"][0]["bldg_id"] == body["resolvable"][0]["bldg_id"]
 
     @pytest.mark.integration
     def test_metadata_summary_single_component(self, client: TestClient) -> None:
@@ -253,20 +270,28 @@ class TestAppEndpointsIntegration:
         assert "SmallOffice" in body["warnings"][0]
 
     @pytest.mark.integration
-    def test_timeseries_composite_multi_component_sqft_mode_scales_linearly(self, client: TestClient) -> None:
-        payload: dict[str, Any] = {
-            "components": [
-                {"product": "comstock", "building_type": "SmallOffice", "fraction": 0.67, "sqft": 40_000},
-                {"product": "comstock", "building_type": "RetailStandalone", "fraction": 0.33, "sqft": 20_000},
-            ],
-            "state": "DE",
-            "resample": "hourly",
-        }
+    def test_timeseries_composite_multi_component_sqft_mode_scales_linearly(self, client: TestClient, tmp_path: Path) -> None:
+        """Pin `bldg_ids` so both calls scale the *same* representative buildings -- otherwise a doubled
+        target_sqft can (correctly) pick a different, better-matching building for the new size, breaking
+        the linear-scaling invariant this test checks (see find_nearest_sqft_bldg_id())."""
+        components: list[dict[str, Any]] = [
+            {"product": "comstock", "building_type": "SmallOffice", "fraction": 0.67, "sqft": 40_000},
+            {"product": "comstock", "building_type": "RetailStandalone", "fraction": 0.33, "sqft": 20_000},
+        ]
+        bldg_ids: dict[str, int] = {}
+        for entry in components:
+            processor = ComStockProcessor(
+                state="DE", county_name="All", building_type=str(entry["building_type"]), upgrade="0", base_dir=tmp_path / "comstock"
+            )
+            metadata = processor.process_metadata(save_dir=processor.base_dir)
+            bldg_ids[f"{entry['product']}:{entry['building_type']}"] = int(metadata["bldg_id"].iloc[0])
+
+        payload: dict[str, Any] = {"components": components, "state": "DE", "resample": "hourly", "bldg_ids": bldg_ids}
         response = client.post("/api/timeseries/composite", json=payload)
         assert response.status_code == 200
         body = response.json()
 
-        doubled = {**payload, "components": [{**c, "sqft": c["sqft"] * 2} for c in payload["components"]]}
+        doubled = {**payload, "components": [{**c, "sqft": c["sqft"] * 2} for c in components]}
         response_doubled = client.post("/api/timeseries/composite", json=doubled)
         assert response_doubled.status_code == 200
         body_doubled = response_doubled.json()

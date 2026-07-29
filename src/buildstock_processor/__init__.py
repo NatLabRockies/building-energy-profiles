@@ -12,6 +12,7 @@ from .composite import (
     CompositeBuildingType,
     CompositeComponent,
     combine_composite_time_series,
+    find_nearest_sqft_bldg_id,
     normalize_time_series_columns,
     pull_composite_time_series,
 )
@@ -82,6 +83,7 @@ __all__ = [
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
     "estimate_portfolio_energy",
+    "find_nearest_sqft_bldg_id",
     "list_available_counties",
     "list_available_states",
     "list_energy_star_property_types",

@@ -10,12 +10,62 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor import CompositeBuildingType, CompositeComponent, combine_composite_time_series, pull_composite_time_series
+from buildstock_processor import (
+    CompositeBuildingType,
+    CompositeComponent,
+    combine_composite_time_series,
+    find_nearest_sqft_bldg_id,
+    pull_composite_time_series,
+)
 from buildstock_processor._base import BuildStockProcessor
+from buildstock_processor.comstock import ComStockProcessor
 
 
 def _make_time_series(timestamps: pd.DatetimeIndex, value: float, column: str = "out.electricity.total.energy_consumption") -> pd.DataFrame:
     return pd.DataFrame({"bldg_id": 1, "timestamp": timestamps, column: value})
+
+
+class TestFindNearestSqftBldgId:
+    def test_picks_closest_row(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2, 3], "in.sqft": [10_000.0, 25_000.0, 50_000.0]})
+
+        assert find_nearest_sqft_bldg_id(metadata, target_sqft=27_000.0) == 2
+
+    def test_exact_match_wins(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2, 3], "in.sqft": [10_000.0, 25_000.0, 50_000.0]})
+
+        assert find_nearest_sqft_bldg_id(metadata, target_sqft=50_000.0) == 3
+
+    def test_tolerates_unit_suffixed_sqft_column(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2], "in.sqft..ft2": [10_000.0, 50_000.0]})
+
+        assert find_nearest_sqft_bldg_id(metadata, target_sqft=45_000.0) == 2
+
+    def test_explicit_sqft_column_overrides_autodetect(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2], "in.sqft": [10_000.0, 50_000.0], "custom_sqft": [48_000.0, 1_000.0]})
+
+        assert find_nearest_sqft_bldg_id(metadata, target_sqft=45_000.0, sqft_column="custom_sqft") == 1
+
+    def test_ignores_rows_with_nan_sqft(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2, 3], "in.sqft": [10_000.0, None, 50_000.0]})
+
+        assert find_nearest_sqft_bldg_id(metadata, target_sqft=20_000.0) == 1
+
+    def test_empty_metadata_raises(self):
+        with pytest.raises(ValueError, match="empty metadata"):
+            find_nearest_sqft_bldg_id(pd.DataFrame(), target_sqft=10_000.0)
+
+    def test_missing_sqft_column_raises(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2]})
+
+        with pytest.raises(ValueError, match="Could not find a floor-area column"):
+            find_nearest_sqft_bldg_id(metadata, target_sqft=10_000.0)
+
+    def test_all_nan_sqft_raises(self):
+        metadata = pd.DataFrame({"bldg_id": [1, 2], "in.sqft": [None, None]})
+
+        with pytest.raises(ValueError, match="No rows with a valid"):
+            find_nearest_sqft_bldg_id(metadata, target_sqft=10_000.0)
 
 
 class TestCompositeComponent:
@@ -408,9 +458,12 @@ class TestPullCompositeTimeSeries:
         assert combined["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(expected_first)
 
     @pytest.mark.integration
-    def test_target_sqft_scales_result_linearly_with_square_footage(self):
+    def test_target_sqft_scales_result_linearly_with_square_footage_for_a_fixed_building(self):
         """`target_sqft` should scale each component by target_sqft / representative_building_sqft, so
-        doubling every target_sqft value should exactly double the combined result."""
+        doubling every target_sqft value should exactly double the combined result -- pinning `bldg_ids`
+        isolates this scaling-math invariant from `find_nearest_sqft_bldg_id()`'s own building selection,
+        which intentionally picks a *different* (better-matching) building for a different target_sqft
+        (see test_target_sqft_picks_a_real_building_close_in_size_to_the_target below)."""
         project_root = Path(__file__).parent.parent
         save_dir = project_root / "datasets" / "composite"
         save_dir.mkdir(parents=True, exist_ok=True)
@@ -422,8 +475,14 @@ class TestPullCompositeTimeSeries:
         value_columns = ["out.electricity.total.energy_consumption"]
         target_sqft = {("comstock", "MediumOffice"): 40_000.0, ("comstock", "RetailStripmall"): 20_000.0}
 
-        combined, _ = pull_composite_time_series(
+        _combined, component_series = pull_composite_time_series(
             composite, save_dir=save_dir, state="DE", value_columns=value_columns, target_sqft=target_sqft
+        )
+        # Pin the buildings picked above so both calls below scale the *same* representative building.
+        bldg_ids = {key: int(series["bldg_id"].iloc[0]) for key, series in component_series.items()}
+
+        combined, _ = pull_composite_time_series(
+            composite, save_dir=save_dir, state="DE", value_columns=value_columns, target_sqft=target_sqft, bldg_ids=bldg_ids
         )
         combined_doubled, _ = pull_composite_time_series(
             composite,
@@ -431,11 +490,43 @@ class TestPullCompositeTimeSeries:
             state="DE",
             value_columns=value_columns,
             target_sqft={key: sqft * 2 for key, sqft in target_sqft.items()},
+            bldg_ids=bldg_ids,
         )
 
         assert combined_doubled["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(
             2 * combined["out.electricity.total.energy_consumption"].iloc[0]
         )
+
+    @pytest.mark.integration
+    def test_target_sqft_picks_a_real_building_close_in_size_to_the_target(self):
+        """Without an explicit `bldg_ids` override, target_sqft mode should pick the real sampled building
+        whose own floor area is closest to the target (find_nearest_sqft_bldg_id()), not an arbitrary
+        "first found" one scaled by a potentially large factor."""
+        project_root = Path(__file__).parent.parent
+        save_dir = project_root / "datasets" / "composite"
+        save_dir.mkdir(parents=True, exist_ok=True)
+        office_key = ("comstock", "MediumOffice")
+
+        composite = CompositeBuildingType.from_fractions(
+            "70% MediumOffice / 30% RetailStripmall", {office_key: 0.7, ("comstock", "RetailStripmall"): 0.3}
+        )
+        target_sqft = {office_key: 40_000.0, ("comstock", "RetailStripmall"): 20_000.0}
+
+        processor = ComStockProcessor(
+            state="DE", county_name="All", building_type="MediumOffice", upgrade="0", base_dir=save_dir / "comstock"
+        )
+        metadata = processor.process_metadata(save_dir=processor.base_dir)
+        sqft_column = next(c for c in metadata.columns if c.startswith("in.sqft"))
+        observed_sqft = pd.to_numeric(metadata[sqft_column], errors="coerce")
+        best_possible_distance = (observed_sqft - target_sqft[office_key]).abs().min()
+
+        _combined, component_series = pull_composite_time_series(
+            composite, save_dir=save_dir, state="DE", value_columns=["out.electricity.total.energy_consumption"], target_sqft=target_sqft
+        )
+        chosen_bldg_id = int(component_series[office_key]["bldg_id"].iloc[0])
+        chosen_sqft = float(metadata.loc[metadata["bldg_id"] == chosen_bldg_id, sqft_column].iloc[0])
+
+        assert abs(chosen_sqft - target_sqft[office_key]) == pytest.approx(best_possible_distance)
 
     @pytest.mark.integration
     def test_target_sqft_missing_component_raises(self):

@@ -73,9 +73,14 @@ def get_energy_star_types() -> list[EnergyStarTypeInfo]:
 
 @app.post("/api/composite/resolve", response_model=CompositeResolveResponse)
 def post_composite_resolve(request: CompositeResolveRequest) -> CompositeResolveResponse:
-    """Resolve one or more ENERGY STAR property types (+ floor-area fractions) to BuildStock building
-    types, dropping/flagging any that don't map to a real ComStock/ResStock building type."""
-    return services.resolve_composite(request)
+    """Resolve one or more ENERGY STAR property types (+ floor-area fractions/sqft) to BuildStock building
+    types, dropping/flagging any that don't map to a real ComStock/ResStock building type.
+
+    In sqft mode, passing `state` also auto-selects a representative bldg_id per component (the real
+    sampled building closest in floor area to its `sqft`), persisted onto the response's `resolvable` list
+    so every downstream page (Dashboard/Timeseries/Measures) uses the same building consistently instead of
+    each independently guessing one."""
+    return services.resolve_composite(request, settings)
 
 
 @app.post("/api/metadata/summary", response_model=MetadataSummaryResponse)

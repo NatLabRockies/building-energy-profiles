@@ -4,6 +4,8 @@ synthetic time series data. Endpoints that need real ComStock/ResStock data are 
 tests/test_api_main.py's integration tests instead.
 """
 
+from pathlib import Path
+
 import pandas as pd
 import pytest
 
@@ -22,9 +24,13 @@ from api.services import (
 )
 
 
+def _make_settings(tmp_path: Path) -> Settings:
+    return Settings(cache_dir=tmp_path, default_state="DE", cors_origins=[])
+
+
 class TestResolveComposite:
     @pytest.mark.unit
-    def test_resolves_exact_and_approximate_matches(self):
+    def test_resolves_exact_and_approximate_matches(self, tmp_path: Path) -> None:
         request = CompositeResolveRequest(
             components=[
                 EnergyStarComponentIn(energy_star_property_type="Supermarket/Grocery Store", fraction=0.7),
@@ -32,7 +38,7 @@ class TestResolveComposite:
             ]
         )
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.ok is True
         assert response.unmapped == []
@@ -42,7 +48,7 @@ class TestResolveComposite:
         assert by_type["SmallOffice"].fraction == pytest.approx(0.3)
 
     @pytest.mark.unit
-    def test_unmapped_type_excluded_from_resolvable_and_fractions_renormalized(self):
+    def test_unmapped_type_excluded_from_resolvable_and_fractions_renormalized(self, tmp_path: Path) -> None:
         request = CompositeResolveRequest(
             components=[
                 EnergyStarComponentIn(energy_star_property_type="Bank Branch", fraction=0.5),
@@ -50,7 +56,7 @@ class TestResolveComposite:
             ]
         )
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.unmapped == ["Zoo"]
         assert len(response.resolvable) == 1
@@ -59,17 +65,17 @@ class TestResolveComposite:
         assert response.total_fraction == pytest.approx(1.0)
 
     @pytest.mark.unit
-    def test_unrecognized_property_type_name_is_unmapped(self):
+    def test_unrecognized_property_type_name_is_unmapped(self, tmp_path: Path) -> None:
         request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Not A Real Type", fraction=1.0)])
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.unmapped == ["Not A Real Type"]
         assert response.resolvable == []
         assert response.components[0].match_quality == "unmapped"
 
     @pytest.mark.unit
-    def test_all_unmapped_gives_empty_resolvable_without_dividing_by_zero(self):
+    def test_all_unmapped_gives_empty_resolvable_without_dividing_by_zero(self, tmp_path: Path) -> None:
         request = CompositeResolveRequest(
             components=[
                 EnergyStarComponentIn(energy_star_property_type="Zoo", fraction=0.6),
@@ -77,13 +83,13 @@ class TestResolveComposite:
             ]
         )
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.resolvable == []
         assert response.unmapped == ["Zoo", "Swimming Pool"]
 
     @pytest.mark.unit
-    def test_sqft_mode_derives_fractions_and_passes_through_absolute_sqft(self):
+    def test_sqft_mode_derives_fractions_and_passes_through_absolute_sqft(self, tmp_path: Path) -> None:
         request = CompositeResolveRequest(
             components=[
                 EnergyStarComponentIn(energy_star_property_type="Supermarket/Grocery Store", sqft=70_000),
@@ -91,7 +97,7 @@ class TestResolveComposite:
             ]
         )
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.total_sqft == pytest.approx(100_000)
         by_type = {c.building_type: c for c in response.resolvable}
@@ -101,7 +107,7 @@ class TestResolveComposite:
         assert by_type["SmallOffice"].sqft == pytest.approx(30_000)
 
     @pytest.mark.unit
-    def test_sqft_mode_unmapped_type_keeps_absolute_sqft_on_resolvable_subset(self):
+    def test_sqft_mode_unmapped_type_keeps_absolute_sqft_on_resolvable_subset(self, tmp_path: Path) -> None:
         """Unlike fraction, sqft isn't renormalized when an entry is dropped as unmapped -- it stays the
         literal square footage the user entered for the remaining resolvable components."""
         request = CompositeResolveRequest(
@@ -111,13 +117,75 @@ class TestResolveComposite:
             ]
         )
 
-        response = resolve_composite(request)
+        response = resolve_composite(request, _make_settings(tmp_path))
 
         assert response.unmapped == ["Zoo"]
         assert len(response.resolvable) == 1
         assert response.resolvable[0].fraction == pytest.approx(1.0)
         assert response.resolvable[0].sqft == pytest.approx(50_000)
         assert response.total_sqft == pytest.approx(100_000)
+
+    @pytest.mark.unit
+    def test_sqft_mode_without_state_does_not_auto_select_bldg_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No `state` given -> stays a fast, offline crosswalk lookup; no metadata download attempted."""
+        called = False
+
+        def fake_build_processor(*args: object, **kwargs: object) -> object:
+            nonlocal called
+            called = True
+            raise AssertionError("should not be called")
+
+        monkeypatch.setattr("api.services._build_processor", fake_build_processor)
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Bank Branch", sqft=50_000)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert called is False
+        assert response.resolvable[0].bldg_id is None
+        assert response.warnings == []
+
+    @pytest.mark.unit
+    def test_sqft_mode_with_state_auto_selects_bldg_id(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        metadata = pd.DataFrame({"bldg_id": [1, 2, 3], "in.sqft": [10_000.0, 50_000.0, 100_000.0]})
+
+        class _FakeProcessor:
+            base_dir = tmp_path
+
+            def process_metadata(self, save_dir: Path) -> pd.DataFrame:
+                return metadata
+
+        def fake_build_processor(*args: object, **kwargs: object) -> _FakeProcessor:
+            return _FakeProcessor()
+
+        monkeypatch.setattr("api.services._build_processor", fake_build_processor)
+        request = CompositeResolveRequest(
+            components=[EnergyStarComponentIn(energy_star_property_type="Bank Branch", sqft=50_000)],
+            state="DE",
+        )
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].bldg_id == 2
+        assert response.components[0].bldg_id == 2
+        assert response.warnings == []
+
+    @pytest.mark.unit
+    def test_sqft_mode_bldg_id_lookup_failure_warns_but_does_not_raise(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+        def fake_build_processor(*args: object, **kwargs: object) -> object:
+            raise RuntimeError("network down")
+
+        monkeypatch.setattr("api.services._build_processor", fake_build_processor)
+        request = CompositeResolveRequest(
+            components=[EnergyStarComponentIn(energy_star_property_type="Bank Branch", sqft=50_000)],
+            state="DE",
+        )
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.ok is True
+        assert response.resolvable[0].bldg_id is None
+        assert response.warnings
+        assert "network down" in response.warnings[0]
 
     @pytest.mark.unit
     def test_mixed_fraction_and_sqft_components_rejected(self):

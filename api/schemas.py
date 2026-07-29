@@ -43,6 +43,11 @@ class EnergyStarComponentIn(BaseModel):
 
 class CompositeResolveRequest(BaseModel):
     components: list[EnergyStarComponentIn] = Field(min_length=1)
+    state: str | None = Field(default=None, min_length=2, max_length=2)
+    """2-letter state abbreviation. Optional, but required (alongside sqft mode) to auto-select a
+    representative bldg_id per component -- see `bldg_id` on `ResolvedComponent`/`CompositeComponentSpec`.
+    Without it, resolution stays a fast, offline crosswalk lookup with no bldg_id selected."""
+    county_name: str | list[str] = "All"
 
     @model_validator(mode="after")
     def _check_consistent_mode(self) -> CompositeResolveRequest:
@@ -59,6 +64,12 @@ class ResolvedComponent(BaseModel):
     fraction: float
     sqft: float | None = None
     """The absolute square footage originally entered for this component, if the request used sqft mode."""
+    bldg_id: int | None = None
+    """The real sampled building (closest in floor area to `sqft`) auto-selected for this component, if
+    `CompositeResolveRequest.state` was given in sqft mode -- see
+    `buildstock_processor.composite.find_nearest_sqft_bldg_id()`. Reused as-is by every downstream page
+    (Dashboard/Timeseries/Measures) via `CompositeComponentSpec.bldg_id` instead of each independently
+    guessing a representative building."""
     match_quality: Literal["exact", "approximate", "unmapped"]
     notes: str
 
@@ -74,6 +85,10 @@ class CompositeComponentSpec(BaseModel):
     results are scaled to represent an actual building of that square footage (see
     `buildstock_processor.composite.pull_composite_time_series`'s `target_sqft` parameter) instead of just
     a floor-area share of an unspecified total."""
+    bldg_id: int | None = None
+    """Pin a specific representative building for this component (e.g. one already selected by
+    `resolve_composite()`'s sqft-mode auto-selection) instead of letting the timeseries endpoint pick its
+    own (by default, the real building closest in size to `sqft`, or otherwise the first one found)."""
     label: str | None = None
     """Optional original ENERGY STAR property type name, for display purposes only."""
 
@@ -91,6 +106,10 @@ class CompositeResolveResponse(BaseModel):
     """Sum of every entered component's fraction, before dropping unmapped ones."""
     total_sqft: float | None = None
     """Sum of every entered component's sqft, if the request used sqft mode."""
+    warnings: list[str] = Field(default_factory=list)
+    """Data-quality warnings, e.g. a bldg_id auto-selection failing for one component (that component just
+    keeps `bldg_id=None`, falling back to each downstream endpoint's own default selection, rather than
+    failing the whole resolve)."""
 
 
 class CompositeRequestBase(BaseModel):

@@ -145,6 +145,38 @@ class CompositeBuildingType:
         return {component.key: component for component in self.components}
 
 
+def find_nearest_sqft_bldg_id(
+    metadata: pd.DataFrame, target_sqft: float, sqft_column: str | None = None, bldg_id_column: str = "bldg_id"
+) -> int:
+    """Return the `bldg_id` of the row in `metadata` whose floor area is closest to `target_sqft`.
+
+    Used to pick a real, appropriately-sized representative building for a `target_sqft`-mode composite
+    component, instead of an arbitrary "first found" building that's then linearly rescaled to the target
+    size -- a building that's already close in size to begin with carries more realistic non-linear
+    characteristics (HVAC equipment sizing, schedules, etc.) than one rescaled from a very different size.
+
+    Args:
+        metadata: a metadata sample (e.g. from `BuildStockProcessor.process_metadata()`) to search.
+        target_sqft: the floor area to match against.
+        sqft_column: floor-area column name; auto-detected (`in.sqft` family) if not given.
+        bldg_id_column: the building/dwelling-unit identifier column.
+
+    Raises:
+        ValueError: if `metadata` is empty, or has no usable floor-area column.
+    """
+    if metadata.empty:
+        raise ValueError("Cannot find a nearest-sqft building in empty metadata.")
+    resolved_sqft_column = sqft_column or next((c for c in metadata.columns if c.startswith("in.sqft")), None)
+    if resolved_sqft_column is None:
+        raise ValueError("Could not find a floor-area column (in.sqft*) in metadata to match target_sqft against.")
+    numeric_sqft = pd.to_numeric(metadata[resolved_sqft_column], errors="coerce")
+    valid = numeric_sqft.dropna()
+    if valid.empty:
+        raise ValueError(f"No rows with a valid {resolved_sqft_column} value found.")
+    nearest_index = (valid - target_sqft).abs().idxmin()
+    return int(metadata.loc[nearest_index, bldg_id_column])
+
+
 def normalize_time_series_columns(data_frame: pd.DataFrame) -> pd.DataFrame:
     """Strip trailing "..<unit>" suffixes (e.g. "..kwh", "..kwh_per_ft2") from column names.
 
@@ -289,12 +321,14 @@ def pull_composite_time_series(
         value_columns: passed through to `combine_composite_time_series()`.
         target_sqft: optional `{(product, building_type): square_feet}` override that scales each
             component's contribution to an *absolute* target floor area instead of a `fraction` share of an
-            unspecified total. For each component, this looks up the representative building's own
-            `in.sqft` from its metadata and computes `weight = target_sqft[key] / representative_sqft`,
-            passed through to `combine_composite_time_series()` as `weights` (so `composite`'s fractions
-            don't need to sum to 1.0 in this mode -- they're ignored in favor of `target_sqft`). When given
-            together with `bldg_ids`, metadata is still fetched (filtered to that `bldg_id`) purely to read
-            its floor area.
+            unspecified total. Unless `bldg_ids` already pins a specific building for that component, the
+            representative building is chosen via `find_nearest_sqft_bldg_id()` -- the real sampled
+            building whose own floor area is closest to the target -- rather than an arbitrary "first
+            found" one; this looks up that building's own `in.sqft` and computes
+            `weight = target_sqft[key] / representative_sqft`, passed through to
+            `combine_composite_time_series()` as `weights` (so `composite`'s fractions don't need to sum to
+            1.0 in this mode -- they're ignored in favor of `target_sqft`). When given together with
+            `bldg_ids`, metadata is still fetched (filtered to that `bldg_id`) purely to read its floor area.
         upgrade_by_component: optional `{(product, building_type): upgrade_id}` per-component override --
             each component uses its own entry here instead of the shared `upgrade` if present. Useful for
             isolating a single measure's effect to just the component(s) it actually applies to (e.g. a
@@ -352,6 +386,11 @@ def pull_composite_time_series(
             elif percentile is not None:
                 selection = select_building_condition_sample(metadata, percentile=percentile, band=building_condition_band)
                 metadata = metadata[metadata["bldg_id"] == selection.median_bldg_id]
+            elif target_sqft is not None and component.key in target_sqft:
+                # Pick a real building already close in size to the target, rather than an arbitrary
+                # "first found" one that then gets linearly rescaled -- see find_nearest_sqft_bldg_id().
+                nearest_bldg_id = find_nearest_sqft_bldg_id(metadata, target_sqft[component.key])
+                metadata = metadata[metadata["bldg_id"] == nearest_bldg_id]
             sqft_column = next((c for c in metadata.columns if c.startswith("in.sqft")), None) if target_sqft is not None else None
             select_columns = ["bldg_id", "in.state"] + ([sqft_column] if sqft_column else [])
             sample = metadata[select_columns].head(1)
