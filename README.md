@@ -1,6 +1,6 @@
 # BuildStock Processor
 
-A Python package for downloading and analyzing NREL ComStock and ResStock metadata, annual results, upgrade
+A Python package for downloading and analyzing NLR ComStock and ResStock metadata, annual results, upgrade
 packages, and individual-building time series from the public OEDI data lake.
 
 The package exposes two processors:
@@ -22,6 +22,21 @@ uv sync --group dev
 
 The project uses a standard `src/` package layout. `uv sync` installs `buildstock_processor` into the project
 environment as an editable package.
+
+## Local Development
+
+The repo also includes a FastAPI backend (`api/`) and an Angular webapp (`webapp/`) for interactively exploring
+BuildStock data in a browser. Install the extra dependencies, then run both together with:
+
+```bash
+uv sync --group dev --group api
+cd webapp && npm install && cd ..
+
+make dev
+```
+
+`make dev` runs [`dev.sh`](dev.sh), which starts the FastAPI backend at http://localhost:8000 and the Angular
+frontend at http://localhost:4200, and stops both on Ctrl+C.
 
 ## Documentation
 
@@ -89,7 +104,7 @@ Upgrade package ids are release-specific, so they are grouped by release in both
 
 ## ENERGY STAR Building Type Crosswalk
 
-The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NREL/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
+The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NLR/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
 
 ```python
 from buildstock_processor import map_energy_star_property_type, energy_star_property_types_for_buildstock_type
@@ -102,6 +117,20 @@ energy_star_property_types_for_buildstock_type("comstock", "SmallOffice")
 # ('Bank Branch', 'Financial Office', 'Fire Station', ...) -- reverse lookup
 ```
 
+## Composite ("Mixed-Use") Building Types
+
+Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that is 70% office space over 30% ground-floor retail. `CompositeBuildingType` (see [docs/usage.md](docs/usage.md#composite-mixed-use-building-types) and [`03_composite_building_example.ipynb`](03_composite_building_example.ipynb)) models this as a fraction-weighted combination of two or more `(product, building_type)` components -- including mixing ComStock and ResStock components (e.g. ground-floor retail under apartments). `pull_composite_time_series()` downloads a representative building's time series per component and auto-stitches them into one synthetic composite time series; `combine_composite_time_series()` does the combining step alone if you've already downloaded component time series yourself.
+
+```python
+from buildstock_processor import CompositeBuildingType, pull_composite_time_series
+
+office_retail = CompositeBuildingType.from_fractions(
+    "70% MediumOffice / 30% RetailStripmall",
+    {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
+)
+combined, components = pull_composite_time_series(office_retail, save_dir=composite_dir, state="DE")
+```
+
 ## Package Layout
 
 ```text
@@ -111,7 +140,8 @@ src/buildstock_processor/
 |-- comstock.py                  # ComStock implementation and releases
 |-- resstock.py                  # ResStock implementation and releases
 |-- data_dictionary.py           # packaged building-type/result-variable/upgrade-package dictionary
-`-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
+|-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
+`-- composite.py                 # CompositeBuildingType + combine/pull composite time series
 ```
 
 ## ComStockProcessor Class
@@ -151,7 +181,7 @@ supports the last three published releases of the ComStock AMY2018 dataset, sele
 
 If `release` is omitted, the most recent supported release is used. Passing an unsupported value raises a `ValueError`
 listing the currently supported releases. The full set of supported releases and their on-disk locations are defined
-in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NREL publishes a new release, add it there and drop the
+in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NLR publishes a new release, add it there and drop the
 oldest entry to keep a rolling window of three supported releases.
 
 ### OEDI year and release paths
@@ -336,7 +366,7 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 
 ## ResStockProcessor Class
 
-The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NREL's
+The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NLR's
 **residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
 its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
 abstract `BuildStockProcessor` base class (`src/buildstock_processor/_base.py`), but has its own metadata layout and

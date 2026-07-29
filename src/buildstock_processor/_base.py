@@ -1,6 +1,6 @@
 """
 BuildStock Processor - shared infrastructure for downloading and processing
-NREL building stock datasets (ComStock, ResStock) hosted on the OEDI data lake.
+NLR building stock datasets (ComStock, ResStock) hosted on the OEDI data lake.
 
 ComStockProcessor and ResStockProcessor both build on this module: the two datasets share the same S3
 bucket, the same time series file layout, and the same upgrades_lookup.json convention, but differ in how
@@ -28,7 +28,7 @@ class BuildStockRelease:
     """Describes where a single published release of a building stock dataset (ComStock or ResStock) lives
     on the OEDI data lake.
 
-    NREL periodically republishes older releases under the most recent year's directory using a
+    NLR periodically republishes older releases under the most recent year's directory using a
     consistent, harmonized layout, so `year` below is the directory that currently hosts this release, not
     necessarily the year it was first published.
     """
@@ -153,7 +153,7 @@ class BuildStockProcessor(ABC):
 
         return names
 
-    def _available_states(self) -> list[str]:
+    def available_states(self) -> list[str]:
         """Return the state abbreviations that have published metadata for this release."""
         prefixes = self._list_common_prefixes(self._metadata_key_prefix)
         return [name.split("=", 1)[1] for name in prefixes if name.startswith("state=")]

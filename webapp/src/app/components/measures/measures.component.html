@@ -1,0 +1,131 @@
+<div class="page">
+  <h1>Measures</h1>
+  <p class="intro">
+    Pick a handful of upgrade measures to compare against the baseline (upgrade {{ baselineUpgrade }}) for
+    the composite building.
+    @if (distinctProducts.length > 1) {
+      This composite mixes <strong>commercial</strong> (ComStock) and <strong>residential</strong>
+      (ResStock) building types, so measures below are labeled by which one they apply to -- a commercial
+      measure only changes the commercial component's energy, and vice versa.
+    } @else if (distinctProducts[0] === 'resstock') {
+      This composite is entirely <strong>residential</strong> (ResStock), so only residential measures
+      apply.
+    } @else {
+      This composite is entirely <strong>commercial</strong> (ComStock), so only commercial measures apply.
+    }
+  </p>
+
+  @if (loading()) {
+    <p>Loading measure catalog&hellip;</p>
+  }
+  @if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  }
+
+  @if (!loading()) {
+    <div class="measure-controls">
+      <input
+        type="search"
+        class="search-input"
+        placeholder="Search measures by name&hellip;"
+        [ngModel]="searchTerm()"
+        (ngModelChange)="searchTerm.set($event)"
+      />
+      @if (distinctProducts.length > 1) {
+        <div class="product-filter" role="group" aria-label="Filter by product">
+          <button type="button" [class.active]="productFilter() === 'all'" (click)="productFilter.set('all')">All</button>
+          @for (product of distinctProducts; track product) {
+            <button type="button" [class.active]="productFilter() === product" (click)="productFilter.set(product)">
+              {{ productLabels[product] }}
+            </button>
+          }
+        </div>
+      }
+      <span class="selection-count">
+        {{ selectedKeys().size }} / {{ maxSelectable }} selected
+        @if (selectedKeys().size > 0) {
+          <button type="button" class="clear-btn" (click)="clearSelection()">Clear</button>
+        }
+      </span>
+    </div>
+
+    <div class="measure-list">
+      @for (measure of comparableMeasures; track measure.selectionKey) {
+        <label class="measure-item" [class.selected]="isSelected(measure.selectionKey)">
+          <input
+            type="checkbox"
+            [checked]="isSelected(measure.selectionKey)"
+            [disabled]="!isSelected(measure.selectionKey) && selectedKeys().size >= maxSelectable"
+            (change)="toggle(measure.selectionKey)"
+          />
+          @if (distinctProducts.length > 1) {
+            <span class="product-badge" [class]="measure.product">{{ productLabels[measure.product] }}</span>
+          }
+          {{ measure.name }}
+        </label>
+      } @empty {
+        <p class="no-results">No measures match your search.</p>
+      }
+    </div>
+
+    <button class="primary" (click)="compare()" [disabled]="comparing() || selectedKeys().size === 0">
+      {{ comparing() ? 'Comparing...' : 'Compare selected measures' }}
+    </button>
+  }
+
+  @if (compareResult(); as result) {
+    @if (result.warnings.length > 0) {
+      <div class="warn">
+        @for (w of result.warnings; track w) {
+          <p>&#9888;&#65039; {{ w }}</p>
+        }
+      </div>
+    }
+
+    @if (savingsChartData) {
+      <div class="chart-box savings-chart">
+        <h3>Site energy savings by measure (positive = savings)</h3>
+        <div class="chart-canvas-wrap">
+          <app-chart type="bar" [data]="savingsChartData" [options]="barOptions"></app-chart>
+        </div>
+      </div>
+    }
+
+    <ag-grid-angular
+      class="measures-grid"
+      [theme]="gridTheme"
+      [rowData]="savingsRowData()"
+      [columnDefs]="savingsColDefs"
+      [defaultColDef]="defaultColDef"
+      domLayout="autoHeight"
+    ></ag-grid-angular>
+
+    <h2>Detail: load duration curve &amp; end-use breakdown</h2>
+    <p class="chart-note">
+      Full 8760 time series and end-use breakdown are shown for every selected measure
+      ({{ comparedKeys().length }} of {{ maxSelectable }} max: {{ comparedMeasureNames() }}),
+      compared against the composite's baseline.
+    </p>
+    @if (loadingDetail()) {
+      <p>Downloading detailed time series&hellip;</p>
+    }
+
+    <section class="chart-box ldc-box">
+      <h3>Load duration curve &mdash; Site energy (total)</h3>
+      <div class="chart-canvas-wrap">
+        @if (loadDurationChartData) {
+          <app-chart type="line" [data]="loadDurationChartData" [options]="lineOptions"></app-chart>
+        }
+      </div>
+    </section>
+
+    <section class="chart-box end-use-box">
+      <h3>Annual energy by end use</h3>
+      <div class="chart-canvas-wrap">
+        @if (endUseChartData) {
+          <app-chart type="bar" [data]="endUseChartData" [options]="stackedBarOptions"></app-chart>
+        }
+      </div>
+    </section>
+  }
+</div>

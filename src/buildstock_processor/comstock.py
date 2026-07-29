@@ -2,7 +2,7 @@
 ComStock Processor - A tool to download and process ComStock data.
 
 This package provides utilities for downloading metadata and time series data
-from NREL's ComStock dataset hosted on AWS S3.
+from NLR's ComStock dataset hosted on AWS S3.
 
 @author: nllong
 """
@@ -20,7 +20,7 @@ from .data_dictionary import data_dictionary
 # metadata_and_annual_results/by_state_and_county partitioned layout, and the same
 # timeseries_individual_buildings/by_state layout used for time series files.
 #
-# When NREL publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
+# When NLR publishes a new release, add it here (bumping DEFAULT_RELEASE if it should become the
 # default) and drop the oldest entry to keep this rolling window at three supported releases.
 SUPPORTED_RELEASES: dict[str, BuildStockRelease] = {
     "release_1": BuildStockRelease(year="2025", folder="comstock_amy2018_release_1", label="ComStock AMY2018 Release 1"),
@@ -112,7 +112,7 @@ class ComStockProcessor(BuildStockProcessor):
         if self.county_name != "All" and self.state == "All":
             print("County is specified, but State is not. Ignoring County...")
 
-        states = self._available_states() if self.state == "All" else [self.state]
+        states = self.available_states() if self.state == "All" else [self.state]
         with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
             counties_by_state = list(executor.map(self._available_counties, states))
         return [MetadataPartition(state=state, county=county) for state, counties in zip(states, counties_by_state) for county in counties]
