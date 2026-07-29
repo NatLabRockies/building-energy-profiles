@@ -1,0 +1,128 @@
+<div class="page">
+  <h1>Composite Building Explorer</h1>
+  <p class="intro">
+    Enter a single ENERGY STAR building type, or a floor-area-weighted mix of several -- by percentage or
+    by absolute square footage -- and we'll resolve each to a real ComStock/ResStock building type via the
+    packaged ENERGY STAR crosswalk.
+  </p>
+
+  <div class="mode-toggle" role="radiogroup" aria-label="Entry mode">
+    <label>
+      <input type="radio" name="mode" [checked]="mode() === 'fraction'" (change)="setMode('fraction')" />
+      By percentage
+    </label>
+    <label>
+      <input type="radio" name="mode" [checked]="mode() === 'sqft'" (change)="setMode('sqft')" />
+      By square footage
+    </label>
+  </div>
+
+  <form [formGroup]="form" (ngSubmit)="resolve()">
+    <div class="rows" formArrayName="rows">
+      @for (row of rows.controls; track $index; let i = $index) {
+        <div class="row" [formGroupName]="i">
+          <select formControlName="energyStarType" class="type-select">
+            <option value="" disabled>Select a building type&hellip;</option>
+            @for (t of energyStarTypes(); track t.energy_star_property_type) {
+              <option [value]="t.energy_star_property_type">{{ t.energy_star_property_type }}</option>
+            }
+          </select>
+          <input
+            type="number"
+            formControlName="amount"
+            min="0"
+            [step]="mode() === 'fraction' ? 1 : 100"
+            class="amount-input"
+            (change)="onAmountChanged(i)"
+          />
+          <span class="unit-sign">{{ mode() === 'fraction' ? '%' : 'sqft' }}</span>
+          @if (rows.length > 1) {
+            <button type="button" class="remove-btn" (click)="removeRow(i)" aria-label="Remove row">&times;</button>
+          }
+        </div>
+      }
+    </div>
+
+    <div class="row-actions">
+      <button type="button" (click)="addRow()">+ Add another building type</button>
+      @if (mode() === 'fraction') {
+        <span class="total" [class.total-warn]="amountTotal !== 100">Total: {{ amountTotal }}%</span>
+      } @else {
+        <span class="total">Total: {{ amountTotal | number }} sqft</span>
+      }
+    </div>
+
+    <div class="scope-fields">
+      <label>
+        State
+        <input type="text" formControlName="state" maxlength="2" placeholder="DE" class="state-input" />
+      </label>
+      <label>
+        County (optional)
+        <input type="text" formControlName="countyName" placeholder="All" />
+      </label>
+    </div>
+
+    <button type="submit" class="primary" [disabled]="loading()">
+      {{ loading() ? 'Generating...' : 'Generate Composite Model' }}
+    </button>
+  </form>
+
+  @if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  }
+
+  @if (resolveResult(); as result) {
+    <section class="results">
+      <h2>Resolved building types</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>ENERGY STAR type</th>
+            <th>BuildStock type</th>
+            @if (mode() === 'sqft') {
+              <th>Sqft</th>
+            } @else {
+              <th>Fraction</th>
+            }
+            <th>Match quality</th>
+            <th>Notes</th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (c of result.components; track c.energy_star_property_type) {
+            <tr [class.unmapped]="c.match_quality === 'unmapped'">
+              <td>{{ c.energy_star_property_type }}</td>
+              <td>{{ c.building_type ? c.building_type + ' (' + c.product + ')' : '—' }}</td>
+              @if (mode() === 'sqft') {
+                <td>{{ c.sqft | number }}</td>
+              } @else {
+                <td>{{ (c.fraction * 100).toFixed(0) }}%</td>
+              }
+              <td><span class="badge" [class]="c.match_quality">{{ c.match_quality }}</span></td>
+              <td class="notes">{{ c.notes }}</td>
+            </tr>
+          }
+        </tbody>
+      </table>
+
+      @if (result.unmapped.length > 0) {
+        <p class="warn">
+          {{ result.unmapped.length }} type(s) could not be mapped to a BuildStock building type and were
+          excluded: {{ result.unmapped.join(', ') }}.
+          @if (mode() === 'sqft') {
+            The remaining components' square footage is used as entered.
+          } @else {
+            Remaining fractions were renormalized to 100%.
+          }
+        </p>
+      }
+
+      @if (result.resolvable.length > 0) {
+        <button class="primary" (click)="continueToDashboard()">Continue to dashboard &rarr;</button>
+      } @else {
+        <p class="error">None of the entered types could be resolved -- try a different ENERGY STAR type.</p>
+      }
+    </section>
+  }
+</div>
