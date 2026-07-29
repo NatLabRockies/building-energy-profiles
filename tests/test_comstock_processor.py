@@ -296,7 +296,7 @@ class TestComStockProcessor:
         deterministic, we patch state discovery down to a couple of small states while still exercising
         the real "All" code path (discovery -> per-state download -> concatenation -> filtering).
         """
-        mocker.patch.object(ComStockProcessor, "_available_states", return_value=["DE", "RI"])
+        mocker.patch.object(ComStockProcessor, "available_states", return_value=["DE", "RI"])
 
         processor = ComStockProcessor(
             state="All",

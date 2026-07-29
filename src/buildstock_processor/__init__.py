@@ -40,6 +40,7 @@ from .energy_star_crosswalk import (
     list_energy_star_property_types,
     map_energy_star_property_type,
 )
+from .location import list_available_counties, list_available_states
 from .portfolio import (
     CombinedMetric,
     ComponentEstimate,
@@ -81,6 +82,8 @@ __all__ = [
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
     "estimate_portfolio_energy",
+    "list_available_counties",
+    "list_available_states",
     "list_energy_star_property_types",
     "map_energy_star_property_type",
     "normalize_time_series_columns",

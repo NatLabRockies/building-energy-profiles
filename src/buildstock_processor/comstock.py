@@ -112,7 +112,7 @@ class ComStockProcessor(BuildStockProcessor):
         if self.county_name != "All" and self.state == "All":
             print("County is specified, but State is not. Ignoring County...")
 
-        states = self._available_states() if self.state == "All" else [self.state]
+        states = self.available_states() if self.state == "All" else [self.state]
         with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
             counties_by_state = list(executor.map(self._available_counties, states))
         return [MetadataPartition(state=state, county=county) for state, counties in zip(states, counties_by_state) for county in counties]

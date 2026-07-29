@@ -153,7 +153,7 @@ class ResStockProcessor(BuildStockProcessor):
         return f"{root}metadata_and_annual_results/by_state/full/parquet/"
 
     def _metadata_partitions(self) -> list[MetadataPartition]:
-        states = self._available_states() if self.state == "All" else [self.state]
+        states = self.available_states() if self.state == "All" else [self.state]
         return [MetadataPartition(state=state) for state in states]
 
     def _metadata_partition_cache_name(self, partition: MetadataPartition, upgrade: str) -> str:
