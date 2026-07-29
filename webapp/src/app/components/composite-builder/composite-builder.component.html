@@ -93,6 +93,13 @@
   @if (resolveResult(); as result) {
     <section class="results">
       <h2>Resolved building types</h2>
+      @if (result.warnings.length > 0) {
+        <div class="warn">
+          @for (w of result.warnings; track w) {
+            <p>&#9888;&#65039; {{ w }}</p>
+          }
+        </div>
+      }
       <table>
         <thead>
           <tr>
@@ -100,6 +107,7 @@
             <th>BuildStock type</th>
             @if (mode() === 'sqft') {
               <th>Sqft</th>
+              <th>Building</th>
             } @else {
               <th>Fraction</th>
             }
@@ -114,6 +122,7 @@
               <td>{{ c.building_type ? c.building_type + ' (' + c.product + ')' : '—' }}</td>
               @if (mode() === 'sqft') {
                 <td>{{ c.sqft | number }}</td>
+                <td>{{ c.bldg_id ? 'bldg_id ' + c.bldg_id : '—' }}</td>
               } @else {
                 <td>{{ (c.fraction * 100).toFixed(0) }}%</td>
               }

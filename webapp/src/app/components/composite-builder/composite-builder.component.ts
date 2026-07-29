@@ -237,16 +237,24 @@ export class CompositeBuilderComponent implements OnInit {
       };
     });
 
-    this.api.resolveComposite({ components }).subscribe({
-      next: (result) => {
-        this.resolveResult.set(result);
-        this.loading.set(false);
-      },
-      error: (err) => {
-        this.errorMessage.set(err?.error?.error ?? 'Failed to resolve the composite building type.');
-        this.loading.set(false);
-      },
-    });
+    this.api
+      .resolveComposite({
+        components,
+        // Sent so sqft-mode resolution can auto-select a representative bldg_id per component (the real
+        // sampled building closest in floor area to its sqft) -- see ResolvedComponent.bldg_id.
+        state: this.form.get('state')!.value?.toUpperCase(),
+        county_name: this.form.get('countyName')!.value || 'All',
+      })
+      .subscribe({
+        next: (result) => {
+          this.resolveResult.set(result);
+          this.loading.set(false);
+        },
+        error: (err) => {
+          this.errorMessage.set(err?.error?.error ?? 'Failed to resolve the composite building type.');
+          this.loading.set(false);
+        },
+      });
   }
 
   continueToDashboard(): void {

@@ -20,6 +20,10 @@ export interface EnergyStarComponentIn {
 
 export interface CompositeResolveRequest {
   components: EnergyStarComponentIn[];
+  /** 2-letter state abbreviation. Optional, but required (alongside sqft mode) to auto-select a
+   * representative bldg_id per component -- see `bldg_id` on ResolvedComponent/CompositeComponentSpec. */
+  state?: string | null;
+  county_name?: string | string[];
 }
 
 export interface ResolvedComponent {
@@ -28,6 +32,10 @@ export interface ResolvedComponent {
   building_type: string | null;
   fraction: number;
   sqft?: number | null;
+  /** The real sampled building (closest in floor area to `sqft`) auto-selected for this component, if
+   * `state` was given in sqft mode -- reused as-is by every downstream page via
+   * CompositeComponentSpec.bldg_id instead of each independently guessing a representative building. */
+  bldg_id?: number | null;
   match_quality: MatchQuality;
   notes: string;
 }
@@ -37,6 +45,10 @@ export interface CompositeComponentSpec {
   building_type: string;
   fraction: number;
   sqft?: number | null;
+  /** Pin a specific representative building for this component (e.g. one already selected by
+   * resolve_composite()'s sqft-mode auto-selection) instead of letting the timeseries endpoint pick its
+   * own default. */
+  bldg_id?: number | null;
   label?: string | null;
 }
 
@@ -47,6 +59,7 @@ export interface CompositeResolveResponse {
   unmapped: string[];
   total_fraction: number;
   total_sqft?: number | null;
+  warnings: string[];
 }
 
 export interface CompositeRequestBase {
