@@ -8,6 +8,15 @@ from .composite import (
     normalize_time_series_columns,
     pull_composite_time_series,
 )
+from .composite_metadata import (
+    ComponentMetadataSummary,
+    CompositeMeasuresComparison,
+    CompositeMetadataSummary,
+    EndUseValue,
+    MeasureSavings,
+    compare_composite_measures,
+    summarize_composite_metadata,
+)
 from .comstock import ComStockProcessor
 from .data_dictionary import (
     BuildStock,
@@ -43,9 +52,14 @@ __all__ = [
     "ComStockProcessor",
     "CombinedMetric",
     "ComponentEstimate",
+    "ComponentMetadataSummary",
     "CompositeBuildingType",
     "CompositeComponent",
+    "CompositeMeasuresComparison",
+    "CompositeMetadataSummary",
+    "EndUseValue",
     "EnergyStarMapping",
+    "MeasureSavings",
     "MetadataPartition",
     "MetricStats",
     "PortfolioComponent",
@@ -53,6 +67,7 @@ __all__ = [
     "ResStockProcessor",
     "ResultVariable",
     "combine_composite_time_series",
+    "compare_composite_measures",
     "data_dictionary",
     "energy_star_crosswalk",
     "energy_star_property_types_for_buildstock_type",
@@ -62,4 +77,5 @@ __all__ = [
     "normalize_time_series_columns",
     "pull_composite_time_series",
     "result_variables_from_columns",
+    "summarize_composite_metadata",
 ]
