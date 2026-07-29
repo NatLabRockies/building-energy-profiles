@@ -23,6 +23,21 @@ uv sync --group dev
 The project uses a standard `src/` package layout. `uv sync` installs `buildstock_processor` into the project
 environment as an editable package.
 
+## Local Development
+
+The repo also includes a FastAPI backend (`api/`) and an Angular webapp (`webapp/`) for interactively exploring
+BuildStock data in a browser. Install the extra dependencies, then run both together with:
+
+```bash
+uv sync --group dev --group api
+cd webapp && npm install && cd ..
+
+make dev
+```
+
+`make dev` runs [`dev.sh`](dev.sh), which starts the FastAPI backend at http://localhost:8000 and the Angular
+frontend at http://localhost:4200, and stops both on Ctrl+C.
+
 ## Documentation
 
 - [Usage guide](docs/usage.md): installation, searches, time series, upgrades, weights, total-energy calculations,

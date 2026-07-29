@@ -8,6 +8,9 @@ __pycache__
 ~$*
 *.whl
 
+# local dev tool artifacts (Playwright MCP logs/snapshots, etc.)
+.playwright-mcp/
+
 cache
 dist
 test_output.ipynb
@@ -16,12 +19,9 @@ test_output.html
 # don't save any of the large files
 source_files/*.pbf
 
-# Large files - do not commit ComStock/ResStock results
-datasets/comstock
-datasets/resstock
-datasets/test_data
-datasets/composite
-!datasets/comstock/README.md
+# Large files - do not commit downloaded/generated ComStock/ResStock datasets
+datasets/*
+!datasets/README.md
 
 # added by MSweeney
 sampledata
@@ -29,6 +29,3 @@ sampledata
 _archive
 process
 urdb_rate_*.json
-
-# don't save output images (can rerun to create)
-datasets/outputs/*.png

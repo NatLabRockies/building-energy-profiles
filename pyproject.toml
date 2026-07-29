@@ -27,6 +27,11 @@ dependencies = [
 ]
 
 [dependency-groups]
+api = [
+    "fastapi>=0.140.9",
+    "python-multipart>=0.0.32",
+    "uvicorn[standard]>=0.51.0",
+]
 dev = [
     "pytest>=9.1.1",
     "pytest-mock>=3.15.1",
@@ -35,6 +40,7 @@ dev = [
     "ipykernel>=7.3.0",
     "jupyter>=1.1.1",
     "nbformat>=5.10.4",
+    "httpx>=0.28.1",
 ]
 
 [tool.uv]
@@ -52,6 +58,7 @@ source-include = [
 python_version = "3.12"
 files = [
     "src/buildstock_processor/",
+    "api/",
     "tests/",
 ]
 ignore_missing_imports = true
@@ -60,6 +67,15 @@ strict = true
 [[tool.mypy.overrides]]
 module = "tests.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# Pydantic v2's BaseModel resolves to `Any` under this environment's mypy build (a real, reproducible
+# incompatibility -- confirmed with a minimal `class Foo(BaseModel): x: int` reproduction, not specific to
+# this project's code), which otherwise cascades into spurious "Class cannot subclass BaseModel" and
+# "Untyped decorator" errors throughout the API layer. Narrowly suppress just those two error codes for
+# the api package so real type errors elsewhere still fail normally.
+module = "api.*"
+disable_error_code = ["misc", "untyped-decorator"]
 
 [tool.pytest.ini_options]
 minversion = "6.0"

@@ -1,0 +1,30 @@
+:host {
+  display: block;
+}
+
+canvas {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  max-width: 100%;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+  font-size: 0.75rem;
+  color: #374151;
+
+  .gradient {
+    width: 120px;
+    height: 10px;
+    border-radius: 3px;
+    background: linear-gradient(to right, rgb(37, 99, 235), rgb(250, 204, 21), rgb(220, 38, 38));
+  }
+
+  .units {
+    margin-left: 0.5rem;
+    font-style: italic;
+  }
+}
