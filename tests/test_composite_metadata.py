@@ -69,6 +69,23 @@ def _multifamily_frame(n: int = 20, sqft: float = 900.0) -> pd.DataFrame:
     )
 
 
+def _office_frame_varying(n: int = 100, sqft: float = 50_000.0) -> pd.DataFrame:
+    """Site energy increases monotonically with bldg_id (1..n * 1000), so EUI varies and percentile bands
+    are easy to reason about -- unlike `_office_frame()`'s constant values (where mean == median always)."""
+    energy = [float(i) * 1_000.0 for i in range(1, n + 1)]
+    return pd.DataFrame(
+        {
+            "bldg_id": range(n),
+            "in.sqft": sqft,
+            ELECTRICITY_HEATING: [e * 0.25 for e in energy],
+            ELECTRICITY_TOTAL: [e * 0.8 for e in energy],
+            GAS_HEATING: [e * 0.05 for e in energy],
+            GAS_TOTAL: [e * 0.05 for e in energy],
+            SITE_ENERGY: energy,
+        }
+    )
+
+
 @pytest.fixture
 def patch_metadata(monkeypatch):
     """Register `{(product, building_type): DataFrame}` for `process_metadata()`, and
@@ -253,3 +270,117 @@ class TestCompareCompositeMeasures:
 
         with pytest.raises(ValueError, match="at least 1 entry"):
             compare_composite_measures(composite, save_dir=tmp_path, state="DE", comparison_upgrades=[])
+
+
+class TestSummarizeCompositeMetadataBuildingCondition:
+    def test_no_building_condition_uses_mean(self, patch_metadata, tmp_path):
+        frames, _upgrade_frames, _upgrades_lookup = patch_metadata
+        frames[("comstock", "MediumOffice")] = _office_frame_varying(n=100)
+        frames[("comstock", "RetailStripmall")] = _retail_frame()
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE")
+
+        office_summary = next(c for c in result.components if c.building_type == "MediumOffice")
+        assert office_summary.building_condition_percentile is None
+        assert office_summary.condition_sample_size is None
+        assert office_summary.annual_site_energy_kwh_range is None
+        # Component-level annual_site_energy_kwh is this building's own (unscaled) value -- only the
+        # composite's weighted_annual_site_energy_kwh applies each component's fraction. Full-sample mean
+        # of 1000..100000 (step 1000) is 50,500.
+        assert office_summary.annual_site_energy_kwh == pytest.approx(50_500.0)
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 50_500.0 + 0.3 * 35_000.0)
+
+    def test_building_condition_uses_median_of_percentile_band(self, patch_metadata, tmp_path):
+        frames, _upgrade_frames, _upgrades_lookup = patch_metadata
+        frames[("comstock", "MediumOffice")] = _office_frame_varying(n=100)
+        frames[("comstock", "RetailStripmall")] = _retail_frame()
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        result = summarize_composite_metadata(
+            composite, save_dir=tmp_path, state="DE", building_condition={("comstock", "MediumOffice"): 50}
+        )
+
+        office_summary = next(c for c in result.components if c.building_type == "MediumOffice")
+        assert office_summary.building_condition_percentile == 50
+        assert office_summary.condition_sample_size == 10
+        # Band selects bldg_ids 44-53 (energy 45,000-54,000); median 49,500, distinct from the full
+        # sample's mean of 50,500 -- proving median (not mean) is used when building_condition is set.
+        # Component-level values are unscaled (see note above); the range should share that scale.
+        assert office_summary.annual_site_energy_kwh == pytest.approx(49_500.0)
+        assert office_summary.annual_site_energy_kwh_range == pytest.approx((45_000.0, 54_000.0))
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 49_500.0 + 0.3 * 35_000.0)
+
+        # The unaffected retail component keeps using its full-sample mean (constant, so mean==median here).
+        retail_summary = next(c for c in result.components if c.building_type == "RetailStripmall")
+        assert retail_summary.building_condition_percentile is None
+        assert retail_summary.annual_site_energy_kwh == pytest.approx(35_000.0)
+
+
+class TestCompareCompositeMeasuresBuildingCondition:
+    def test_reuses_same_bldg_ids_across_baseline_and_upgrade(self, patch_metadata, tmp_path):
+        """The percentile band must be selected once from the baseline sample and the same bldg_ids reused
+        for every upgrade -- not re-selected per upgrade, which would compare two different, independently
+        chosen building samples instead of "what happens to these buildings under this measure".
+        """
+        _frames, upgrade_frames, upgrades_lookup = patch_metadata
+        office_baseline = _office_frame_varying(n=100)
+        # Cyclic-shift the energy assignment by 37 bldg_ids: re-selecting percentile from the upgrade's own
+        # distribution would then pick an entirely different bldg_id band (7-16) than reusing baseline's
+        # (44-53), so the two approaches give clearly different, distinguishable results (see assertions).
+        shift = 37
+        office_upgrade = office_baseline.copy()
+        shifted_index = (office_baseline["bldg_id"].to_numpy() + shift) % 100
+        for column in (SITE_ENERGY, ELECTRICITY_TOTAL, ELECTRICITY_HEATING, GAS_TOTAL, GAS_HEATING):
+            office_upgrade[column] = office_baseline[column].to_numpy()[shifted_index]
+        retail_baseline = _retail_frame()
+        retail_upgrade = _retail_frame()
+
+        upgrade_frames[("comstock", "MediumOffice")] = {"0": office_baseline, "5": office_upgrade}
+        upgrade_frames[("comstock", "RetailStripmall")] = {"0": retail_baseline, "5": retail_upgrade}
+        upgrades_lookup[("comstock", "MediumOffice")] = {"0": "Baseline", "5": "Upgrade"}
+        upgrades_lookup[("comstock", "RetailStripmall")] = {"0": "Baseline", "5": "Upgrade"}
+
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        result = compare_composite_measures(
+            composite,
+            save_dir=tmp_path,
+            state="DE",
+            baseline_upgrade="0",
+            comparison_upgrades=["5"],
+            metric_columns=[SITE_ENERGY],
+            building_condition={("comstock", "MediumOffice"): 50},
+        )
+
+        savings = result.results[SITE_ENERGY][0]
+        assert savings.baseline_kwh == pytest.approx(0.7 * 49_500.0 + 0.3 * 35_000.0)
+        # Reusing baseline's bldg_ids 44-53 against the *shifted* upgrade frame lands on upgrade energies
+        # 82,000-91,000 (median 86,500) -- re-selecting from the upgrade's own distribution instead would
+        # incorrectly give ~45,150 (the same as baseline, i.e. 0 apparent savings).
+        assert savings.upgrade_kwh == pytest.approx(0.7 * 86_500.0 + 0.3 * 35_000.0)
+
+    def test_small_band_sample_size_warns(self, patch_metadata, tmp_path):
+        _frames, upgrade_frames, upgrades_lookup = patch_metadata
+        office_baseline = _office_frame_varying(n=5)
+        office_upgrade = _office_frame_varying(n=5)
+        retail_baseline = _retail_frame()
+        retail_upgrade = _retail_frame()
+        upgrade_frames[("comstock", "MediumOffice")] = {"0": office_baseline, "5": office_upgrade}
+        upgrade_frames[("comstock", "RetailStripmall")] = {"0": retail_baseline, "5": retail_upgrade}
+        upgrades_lookup[("comstock", "MediumOffice")] = {"0": "Baseline", "5": "Upgrade"}
+        upgrades_lookup[("comstock", "RetailStripmall")] = {"0": "Baseline", "5": "Upgrade"}
+
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        result = compare_composite_measures(
+            composite,
+            save_dir=tmp_path,
+            state="DE",
+            comparison_upgrades=["5"],
+            metric_columns=[SITE_ENERGY],
+            building_condition={("comstock", "MediumOffice"): 50},
+        )
+
+        assert result.warnings
+        assert "noisy" in result.warnings[0]

@@ -1,6 +1,13 @@
 """Download and analyze NLR BuildStock datasets."""
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition
+from .building_condition import (
+    DEFAULT_BAND as BUILDING_CONDITION_DEFAULT_BAND,
+)
+from .building_condition import (
+    BuildingConditionSelection,
+    select_building_condition_sample,
+)
 from .composite import (
     CompositeBuildingType,
     CompositeComponent,
@@ -44,11 +51,13 @@ from .portfolio import (
 from .resstock import ResStockProcessor
 
 __all__ = [
+    "BUILDING_CONDITION_DEFAULT_BAND",
     "BuildStock",
     "BuildStockCatalog",
     "BuildStockDataDictionary",
     "BuildStockProcessor",
     "BuildStockRelease",
+    "BuildingConditionSelection",
     "ComStockProcessor",
     "CombinedMetric",
     "ComponentEstimate",
@@ -77,5 +86,6 @@ __all__ = [
     "normalize_time_series_columns",
     "pull_composite_time_series",
     "result_variables_from_columns",
+    "select_building_condition_sample",
     "summarize_composite_metadata",
 ]

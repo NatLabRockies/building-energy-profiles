@@ -11,6 +11,7 @@ import pandas as pd
 import pytest
 
 from buildstock_processor import CompositeBuildingType, CompositeComponent, combine_composite_time_series, pull_composite_time_series
+from buildstock_processor._base import BuildStockProcessor
 
 
 def _make_time_series(timestamps: pd.DatetimeIndex, value: float, column: str = "out.electricity.total.energy_consumption") -> pd.DataFrame:
@@ -316,6 +317,55 @@ class TestCombineCompositeTimeSeries:
         with pytest.raises(ValueError, match="share no common timestamps"):
             combine_composite_time_series(composite, component_series)
 
+    @pytest.mark.unit
+    def test_weights_override_fraction_and_neednt_sum_to_one(self):
+        """`weights` scales each component to an absolute target (e.g. square footage) rather than a
+        floor-area *share* -- unlike `fraction`, it isn't required to sum to 1.0."""
+        composite = CompositeBuildingType(
+            name="Mixed-Use",
+            components=(
+                # Fractions deliberately don't sum to 1.0 -- would fail assert_normalized() if used, but
+                # weights bypasses that check entirely.
+                CompositeComponent(product="comstock", building_type="MediumOffice", fraction=0.7),
+                CompositeComponent(product="comstock", building_type="RetailStripmall", fraction=0.5),
+            ),
+        )
+        timestamps = pd.date_range("2018-01-01", periods=4, freq="15min")
+        component_series = {
+            ("comstock", "MediumOffice"): _make_time_series(timestamps, value=100.0),
+            ("comstock", "RetailStripmall"): _make_time_series(timestamps, value=10.0),
+        }
+
+        combined = combine_composite_time_series(
+            composite,
+            component_series,
+            weights={("comstock", "MediumOffice"): 2.0, ("comstock", "RetailStripmall"): 3.0},
+        )
+
+        assert (combined["out.electricity.total.energy_consumption"] == 2.0 * 100.0 + 3.0 * 10.0).all()
+
+    @pytest.mark.unit
+    def test_weights_missing_a_component_raises(self):
+        composite = CompositeBuildingType(
+            name="Mixed-Use",
+            components=(
+                CompositeComponent(product="comstock", building_type="MediumOffice", fraction=0.5),
+                CompositeComponent(product="comstock", building_type="RetailStripmall", fraction=0.5),
+            ),
+        )
+        timestamps = pd.date_range("2018-01-01", periods=4, freq="15min")
+        component_series = {
+            ("comstock", "MediumOffice"): _make_time_series(timestamps, value=100.0),
+            ("comstock", "RetailStripmall"): _make_time_series(timestamps, value=10.0),
+        }
+
+        with pytest.raises(ValueError, match="Missing weight"):
+            combine_composite_time_series(
+                composite,
+                component_series,
+                weights={("comstock", "MediumOffice"): 2.0},
+            )
+
 
 class TestPullCompositeTimeSeries:
     """Integration test for the end-to-end download + combine workflow. Makes real network calls."""
@@ -356,3 +406,211 @@ class TestPullCompositeTimeSeries:
             + 0.3 * retail["out.electricity.total.energy_consumption"].iloc[0]
         )
         assert combined["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(expected_first)
+
+    @pytest.mark.integration
+    def test_target_sqft_scales_result_linearly_with_square_footage(self):
+        """`target_sqft` should scale each component by target_sqft / representative_building_sqft, so
+        doubling every target_sqft value should exactly double the combined result."""
+        project_root = Path(__file__).parent.parent
+        save_dir = project_root / "datasets" / "composite"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        composite = CompositeBuildingType.from_fractions(
+            "70% MediumOffice / 30% RetailStripmall",
+            {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
+        )
+        value_columns = ["out.electricity.total.energy_consumption"]
+        target_sqft = {("comstock", "MediumOffice"): 40_000.0, ("comstock", "RetailStripmall"): 20_000.0}
+
+        combined, _ = pull_composite_time_series(
+            composite, save_dir=save_dir, state="DE", value_columns=value_columns, target_sqft=target_sqft
+        )
+        combined_doubled, _ = pull_composite_time_series(
+            composite,
+            save_dir=save_dir,
+            state="DE",
+            value_columns=value_columns,
+            target_sqft={key: sqft * 2 for key, sqft in target_sqft.items()},
+        )
+
+        assert combined_doubled["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(
+            2 * combined["out.electricity.total.energy_consumption"].iloc[0]
+        )
+
+    @pytest.mark.integration
+    def test_target_sqft_missing_component_raises(self):
+        project_root = Path(__file__).parent.parent
+        save_dir = project_root / "datasets" / "composite"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        composite = CompositeBuildingType.from_fractions(
+            "70% MediumOffice / 30% RetailStripmall",
+            {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
+        )
+
+        with pytest.raises(ValueError, match="Missing target_sqft"):
+            pull_composite_time_series(
+                composite,
+                save_dir=save_dir,
+                state="DE",
+                value_columns=["out.electricity.total.energy_consumption"],
+                target_sqft={("comstock", "MediumOffice"): 40_000.0},
+            )
+
+    @pytest.mark.integration
+    def test_upgrade_by_component_isolates_override_to_matching_component(self):
+        """upgrade_by_component should only change the overridden component's own time series -- any
+        component NOT in the mapping must stay at the shared `upgrade` (identical to a plain baseline
+        pull), so a single component's upgrade can't accidentally bleed into an unrelated one."""
+        project_root = Path(__file__).parent.parent
+        save_dir = project_root / "datasets" / "composite"
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        composite = CompositeBuildingType.from_fractions(
+            "70% MediumOffice / 30% RetailStripmall",
+            {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
+        )
+        value_columns = ["out.electricity.total.energy_consumption"]
+        office_key = ("comstock", "MediumOffice")
+        retail_key = ("comstock", "RetailStripmall")
+
+        _combined_baseline, component_series_baseline = pull_composite_time_series(
+            composite, save_dir=save_dir, state="DE", value_columns=value_columns
+        )
+        _combined_override, component_series_override = pull_composite_time_series(
+            composite,
+            save_dir=save_dir,
+            state="DE",
+            value_columns=value_columns,
+            upgrade_by_component={office_key: "1"},
+        )
+
+        # RetailStripmall wasn't overridden -- it must stay at the shared baseline upgrade, unaffected.
+        pd.testing.assert_frame_equal(
+            component_series_override[retail_key].reset_index(drop=True),
+            component_series_baseline[retail_key].reset_index(drop=True),
+        )
+        # MediumOffice *was* overridden to upgrade "1" -- its profile should differ from the baseline pull.
+        office_baseline = component_series_baseline[office_key]["out.electricity.total.energy_consumption"]
+        office_override = component_series_override[office_key]["out.electricity.total.energy_consumption"]
+        assert not office_baseline.equals(office_override)
+
+
+class TestPullCompositeTimeSeriesBuildingCondition:
+    """Unit test (monkeypatched, no network calls) for `pull_composite_time_series`'s `building_condition`
+    parameter -- see `TestPullCompositeTimeSeries` above for the real, network-calling integration tests.
+    """
+
+    def test_selects_percentile_band_median_building_instead_of_first_found(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        # Site energy increases monotonically with bldg_id (1,000..100,000), so EUI-based percentile
+        # selection is easy to reason about -- p50 +/-5 is already known (from test_building_condition.py)
+        # to select bldg_ids 44-53, not bldg_id 0 (which "first building found" would pick instead).
+        office_metadata = pd.DataFrame(
+            {
+                "bldg_id": range(100),
+                "in.state": "DE",
+                "in.sqft": 50_000.0,
+                "out.electricity.total.energy_consumption": [float(i + 1) * 1_000.0 for i in range(100)],
+                "out.site_energy.total.energy_consumption": [float(i + 1) * 1_000.0 for i in range(100)],
+            }
+        )
+        retail_metadata = pd.DataFrame(
+            {
+                "bldg_id": range(20),
+                "in.state": "DE",
+                "in.sqft": 20_000.0,
+                "out.electricity.total.energy_consumption": 35_000.0,
+            }
+        )
+        requested_bldg_ids: list[int] = []
+
+        def fake_process_metadata(self: BuildStockProcessor, save_dir: Path) -> pd.DataFrame:
+            return office_metadata if self.building_type == "MediumOffice" else retail_metadata
+
+        def fake_process_building_time_series(
+            self: BuildStockProcessor, data_frame: pd.DataFrame, save_dir: Path
+        ) -> tuple[list[Path], list[str]]:
+            bldg_id = int(data_frame["bldg_id"].iloc[0])
+            requested_bldg_ids.append(bldg_id)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = save_dir / f"bldg_{bldg_id}.parquet"
+            pd.DataFrame(
+                {
+                    "bldg_id": bldg_id,
+                    "timestamp": pd.date_range("2018-01-01", periods=4, freq="6h"),
+                    "out.electricity.total.energy_consumption": [float(bldg_id)] * 4,
+                }
+            ).to_parquet(path)
+            return [path], [str(bldg_id)]
+
+        monkeypatch.setattr(BuildStockProcessor, "process_metadata", fake_process_metadata)
+        monkeypatch.setattr(BuildStockProcessor, "process_building_time_series", fake_process_building_time_series)
+
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        pull_composite_time_series(
+            composite,
+            save_dir=tmp_path,
+            state="DE",
+            value_columns=["out.electricity.total.energy_consumption"],
+            building_condition={("comstock", "MediumOffice"): 50},
+        )
+
+        office_bldg_id = requested_bldg_ids[0]
+        assert 44 <= office_bldg_id <= 53
+        assert office_bldg_id != 0
+
+    def test_explicit_bldg_id_takes_precedence_over_building_condition(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        office_metadata = pd.DataFrame(
+            {
+                "bldg_id": range(100),
+                "in.state": "DE",
+                "in.sqft": 50_000.0,
+                "out.electricity.total.energy_consumption": [float(i + 1) * 1_000.0 for i in range(100)],
+                "out.site_energy.total.energy_consumption": [float(i + 1) * 1_000.0 for i in range(100)],
+            }
+        )
+        retail_metadata = pd.DataFrame(
+            {
+                "bldg_id": range(20),
+                "in.state": "DE",
+                "in.sqft": 20_000.0,
+                "out.electricity.total.energy_consumption": 35_000.0,
+            }
+        )
+        requested_bldg_ids: list[int] = []
+
+        def fake_process_metadata(self: BuildStockProcessor, save_dir: Path) -> pd.DataFrame:
+            return office_metadata if self.building_type == "MediumOffice" else retail_metadata
+
+        def fake_process_building_time_series(
+            self: BuildStockProcessor, data_frame: pd.DataFrame, save_dir: Path
+        ) -> tuple[list[Path], list[str]]:
+            bldg_id = int(data_frame["bldg_id"].iloc[0])
+            requested_bldg_ids.append(bldg_id)
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = save_dir / f"bldg_{bldg_id}.parquet"
+            pd.DataFrame(
+                {
+                    "bldg_id": bldg_id,
+                    "timestamp": pd.date_range("2018-01-01", periods=4, freq="6h"),
+                    "out.electricity.total.energy_consumption": [float(bldg_id)] * 4,
+                }
+            ).to_parquet(path)
+            return [path], [str(bldg_id)]
+
+        monkeypatch.setattr(BuildStockProcessor, "process_metadata", fake_process_metadata)
+        monkeypatch.setattr(BuildStockProcessor, "process_building_time_series", fake_process_building_time_series)
+
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        pull_composite_time_series(
+            composite,
+            save_dir=tmp_path,
+            state="DE",
+            value_columns=["out.electricity.total.energy_consumption"],
+            bldg_ids={("comstock", "MediumOffice"): 7},
+            building_condition={("comstock", "MediumOffice"): 50},
+        )
+
+        assert requested_bldg_ids[0] == 7

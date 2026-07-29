@@ -21,6 +21,13 @@ Combining is a simple linear blend of every shared numeric `out.*` column:
 
     composite[column][t] = sum(component.fraction * component_series[column][t] for component in composite)
 
+`fraction` represents a *share* of an unspecified-size composite, so combining is a weighted average, not a
+size-accurate blend -- if you know the actual target floor area of each component (e.g. "30,000 sqft
+office + 70,000 sqft retail = 100,000 sqft total"), pass `target_sqft` to `pull_composite_time_series()` (or
+precomputed `weights` to `combine_composite_time_series()` directly) instead: each component is scaled by
+`target_sqft / representative_building_sqft` rather than by its bare `fraction`, so the combined result
+represents an actual building of that square footage rather than a floor-area-agnostic share.
+
 ComStock and ResStock publish the same per-building time series layout (15-minute intervals, aligned to the
 same AMY2018-based calendar for the currently supported releases) but use different unit-suffix conventions
 on column names (e.g. ResStock's `out.electricity.total.energy_consumption..kwh` vs. ComStock's
@@ -42,6 +49,8 @@ from pathlib import Path
 import pandas as pd
 
 from ._base import BuildStockProcessor
+from .building_condition import DEFAULT_BAND as BUILDING_CONDITION_DEFAULT_BAND
+from .building_condition import select_building_condition_sample
 from .comstock import ComStockProcessor
 from .resstock import ResStockProcessor
 
@@ -152,6 +161,7 @@ def combine_composite_time_series(
     component_time_series: Mapping[tuple[str, str], pd.DataFrame],
     value_columns: list[str] | None = None,
     timestamp_column: str = "timestamp",
+    weights: Mapping[tuple[str, str], float] | None = None,
 ) -> pd.DataFrame:
     """Linearly combine each component's time series DataFrame into one synthetic composite time series.
 
@@ -171,12 +181,23 @@ def combine_composite_time_series(
     `timestamp_column` values (an inner join), so components must share the same interval/calendar (true
     for ComStock and ResStock's currently supported AMY2018-based releases).
 
-    Returns a DataFrame with `timestamp_column` plus one combined column per resolved value column, where
-    `composite[column][t] = sum(component.fraction * component_series[column][t] for component in composite)`.
-    """
-    composite.assert_normalized()
+    `weights`, if given, overrides `component.fraction` as the per-component blend multiplier -- one weight
+    per composite component, keyed the same as `component_time_series`. Unlike fractions, weights aren't
+    required to sum to 1.0 (`assert_normalized()` is skipped), which lets a caller scale each component to
+    an absolute target square footage rather than a floor-area *share* of an unspecified total (see
+    `pull_composite_time_series`'s `target_sqft` parameter, which computes exactly this).
 
+    Returns a DataFrame with `timestamp_column` plus one combined column per resolved value column, where
+    `composite[column][t] = sum(weight * component_series[column][t] for component in composite)` (`weight`
+    being `weights[component.key]` if given, else `component.fraction`).
+    """
     required_keys = [component.key for component in composite.components]
+    if weights is not None:
+        missing_weights = [key for key in required_keys if key not in weights]
+        if missing_weights:
+            raise ValueError(f"Missing weight for composite component(s): {missing_weights}")
+    else:
+        composite.assert_normalized()
     missing = [key for key in required_keys if key not in component_time_series]
     if missing:
         raise ValueError(f"Missing component time series for composite '{composite.name}': {missing}")
@@ -216,7 +237,8 @@ def combine_composite_time_series(
         total = pd.Series(0.0, index=shared_index)
         for component in composite.components:
             frame = normalized_frames[component.key]
-            total = total + component.fraction * frame.loc[shared_index, column].astype(float)
+            multiplier = weights[component.key] if weights is not None else component.fraction
+            total = total + multiplier * frame.loc[shared_index, column].astype(float)
         combined[column] = total
 
     combined.index.name = timestamp_column
@@ -234,14 +256,19 @@ def pull_composite_time_series(
     min_sqft: float | None = None,
     max_sqft: float | None = None,
     value_columns: list[str] | None = None,
+    target_sqft: Mapping[tuple[str, str], float] | None = None,
+    upgrade_by_component: Mapping[tuple[str, str], str] | None = None,
+    building_condition: Mapping[tuple[str, str], float] | None = None,
+    building_condition_band: float = BUILDING_CONDITION_DEFAULT_BAND,
 ) -> tuple[pd.DataFrame, dict[tuple[str, str], pd.DataFrame]]:
     """End-to-end: download one representative building's time series per composite component, then combine
     them into a single synthetic composite time series.
 
     For each component, this builds the matching processor (`ComStockProcessor` for "comstock",
     `ResStockProcessor` for "resstock") scoped to `state`/`county_name`/`upgrade`/`min_sqft`/`max_sqft` and
-    that component's `building_type`, picks a representative building (`bldg_ids[component.key]` if given,
-    otherwise the first building `process_metadata()` finds in scope), downloads its time series via
+    that component's `building_type`, picks a representative building (`bldg_ids[component.key]` if given;
+    else `building_condition[component.key]`'s percentile-band median building if given; else the first
+    building `process_metadata()` finds in scope), downloads its time series via
     `process_building_time_series()`, and normalizes/combines every component with
     `combine_composite_time_series()`.
 
@@ -251,30 +278,55 @@ def pull_composite_time_series(
         state: 2-letter state abbreviation shared by every component.
         county_name: county filter shared by every component (see `ComStockProcessor`/`ResStockProcessor`
             for format differences between products).
-        upgrade: upgrade id shared by every component (e.g. "0" for baseline).
+        upgrade: upgrade id used by every component that isn't overridden in `upgrade_by_component` (e.g.
+            "0" for baseline).
         release_by_product: optional `{"comstock": release_id, "resstock": release_id}` override; defaults
             to each processor's own default release.
         bldg_ids: optional `{(product, building_type): bldg_id}` override to pick specific buildings instead
-            of the first one found per component.
+            of the first one found per component. Takes precedence over `building_condition` for the same
+            component.
         min_sqft, max_sqft: optional shared square-footage filters.
         value_columns: passed through to `combine_composite_time_series()`.
+        target_sqft: optional `{(product, building_type): square_feet}` override that scales each
+            component's contribution to an *absolute* target floor area instead of a `fraction` share of an
+            unspecified total. For each component, this looks up the representative building's own
+            `in.sqft` from its metadata and computes `weight = target_sqft[key] / representative_sqft`,
+            passed through to `combine_composite_time_series()` as `weights` (so `composite`'s fractions
+            don't need to sum to 1.0 in this mode -- they're ignored in favor of `target_sqft`). When given
+            together with `bldg_ids`, metadata is still fetched (filtered to that `bldg_id`) purely to read
+            its floor area.
+        upgrade_by_component: optional `{(product, building_type): upgrade_id}` per-component override --
+            each component uses its own entry here instead of the shared `upgrade` if present. Useful for
+            isolating a single measure's effect to just the component(s) it actually applies to (e.g. a
+            commercial-only upgrade shouldn't also change a residential component's profile just because
+            they happen to share a composite) while every other component stays at its own baseline.
+        building_condition: optional `{(product, building_type): percentile}` -- for a component with no
+            `bldg_ids` override, picks that percentile band's median-site-EUI building (see
+            `building_condition.select_building_condition_sample()`) as the representative building instead
+            of the first one `process_metadata()` finds. There's no per-building error range here (only one
+            building's time series is downloaded); use `summarize_composite_metadata()`'s `building_condition`
+            for that band's annual energy median/range instead.
+        building_condition_band: `+/-` percentile points around each `building_condition` target to select
+            from (default `building_condition.DEFAULT_BAND`).
 
     Returns:
         A tuple of `(combined_composite_time_series, {component.key: component_time_series})` so callers can
         inspect both the blended result and each underlying component's own profile.
     """
     component_time_series: dict[tuple[str, str], pd.DataFrame] = {}
+    component_scale: dict[tuple[str, str], float] = {}
     for component in composite.components:
         processor_cls: type[BuildStockProcessor] = (
             ComStockProcessor if component.product.strip().lower() == "comstock" else ResStockProcessor
         )
         product_base_dir = save_dir / component.product.strip().lower()
+        component_upgrade = (upgrade_by_component or {}).get(component.key, upgrade)
 
         processor_kwargs: dict[str, object] = {
             "state": state,
             "county_name": county_name,
             "building_type": component.building_type,
-            "upgrade": upgrade,
+            "upgrade": component_upgrade,
             "base_dir": product_base_dir,
             "min_sqft": min_sqft,
             "max_sqft": max_sqft,
@@ -285,20 +337,41 @@ def pull_composite_time_series(
         processor = processor_cls(**processor_kwargs)
 
         bldg_id = (bldg_ids or {}).get(component.key)
-        if bldg_id is not None:
+        percentile = None if bldg_id is not None else (building_condition or {}).get(component.key)
+        sample_sqft: float | None = None
+        if bldg_id is not None and target_sqft is None:
             sample = pd.DataFrame({"bldg_id": [bldg_id], "in.state": [state]})
         else:
             metadata = processor.process_metadata(save_dir=processor.base_dir)
             if metadata.empty:
                 raise ValueError(f"No buildings found for composite component {component.key} in state={state!r}.")
-            sample = metadata[["bldg_id", "in.state"]].head(1)
+            if bldg_id is not None:
+                metadata = metadata[metadata["bldg_id"] == bldg_id]
+                if metadata.empty:
+                    raise ValueError(f"bldg_id {bldg_id} not found in metadata for composite component {component.key}.")
+            elif percentile is not None:
+                selection = select_building_condition_sample(metadata, percentile=percentile, band=building_condition_band)
+                metadata = metadata[metadata["bldg_id"] == selection.median_bldg_id]
+            sqft_column = next((c for c in metadata.columns if c.startswith("in.sqft")), None) if target_sqft is not None else None
+            select_columns = ["bldg_id", "in.state"] + ([sqft_column] if sqft_column else [])
+            sample = metadata[select_columns].head(1)
+            if sqft_column:
+                sample_sqft = float(sample[sqft_column].iloc[0])
 
-        ts_dir = processor.base_dir / "timeseries" / f"upgrade_{upgrade}"
+        if target_sqft is not None:
+            if component.key not in target_sqft:
+                raise ValueError(f"Missing target_sqft for composite component {component.key}")
+            if not sample_sqft:
+                raise ValueError(f"Could not determine floor area for composite component {component.key} to scale by target_sqft.")
+            component_scale[component.key] = target_sqft[component.key] / sample_sqft
+
+        ts_dir = processor.base_dir / "timeseries" / f"upgrade_{component_upgrade}"
         ts_dir.mkdir(parents=True, exist_ok=True)
-        paths, _building_ids = processor.process_building_time_series(sample, save_dir=ts_dir)
+        paths, _building_ids = processor.process_building_time_series(sample[["bldg_id", "in.state"]], save_dir=ts_dir)
         if not paths:
             raise ValueError(f"Failed to download time series for composite component {component.key}.")
         component_time_series[component.key] = pd.read_parquet(paths[0])
 
-    combined = combine_composite_time_series(composite, component_time_series, value_columns=value_columns)
+    weights = component_scale if target_sqft is not None else None
+    combined = combine_composite_time_series(composite, component_time_series, value_columns=value_columns, weights=weights)
     return combined, component_time_series

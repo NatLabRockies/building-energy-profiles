@@ -24,6 +24,13 @@ a `"<product>:<upgrade_id>"`-prefixed entry (e.g. `"comstock:5"`) that isolates 
 that product only, leaving every other component at `baseline_upgrade` for that particular comparison -- so
 a commercial-only measure can't silently reapply an unrelated residential upgrade that happens to share the
 same numeric id, and vice versa.
+
+Both functions also accept an optional `building_condition` map (`{(product, building_type): percentile}`)
+to represent a component by a specific "building condition" (e.g. a below-average/poor-condition building at
+the 10th percentile, or a highly efficient one at the 90th) instead of its full sample's plain mean -- see
+`building_condition.select_building_condition_sample()` for how the percentile band, its median, and its
+error range are computed. A component with no entry in `building_condition` keeps using the full sample's
+mean, unaffected.
 """
 
 from __future__ import annotations
@@ -36,6 +43,7 @@ from typing import Any
 import pandas as pd
 
 from ._base import BuildStockProcessor
+from .building_condition import DEFAULT_BAND, select_building_condition_sample
 from .composite import CompositeBuildingType, CompositeComponent
 from .comstock import ComStockProcessor
 from .data_dictionary import result_variables_from_columns
@@ -76,9 +84,21 @@ class ComponentMetadataSummary:
     building_type: str
     fraction: float
     building_count: int
+    """Total sampled buildings/dwelling units for this component's (product, building_type) scope --
+    unaffected by `building_condition` (see `condition_sample_size` for the narrower band's size)."""
     avg_sqft: float
     annual_site_energy_kwh: float
+    """The full sample's mean, or (if `building_condition` set this component's percentile) the selected
+    band's median -- see module docstring."""
     site_eui_kbtu_per_ft2: float
+    building_condition_percentile: float | None = None
+    """The percentile requested for this component via `building_condition`, if any."""
+    condition_sample_size: int | None = None
+    """Number of buildings/dwelling units in the percentile band, if `building_condition` was set."""
+    annual_site_energy_kwh_range: tuple[float, float] | None = None
+    """(min, max) annual site energy across the percentile band -- an error range reflecting how much
+    buildings *within the same condition band* still vary, distinct from the full sample's spread. Only set
+    when `building_condition` was set for this component."""
 
 
 @dataclass(frozen=True)
@@ -175,9 +195,13 @@ def _sqft_bounds_warning(component: CompositeComponent, metadata: pd.DataFrame, 
     )
 
 
-def _extract_metric_means(group: pd.DataFrame, columns: list[str]) -> dict[str, float]:
-    """Return `{column: mean value}` for each of `columns` present (after annual-metadata unit-suffix
-    matching) in `group`, skipping any that are missing or all-NaN. Empty `group` yields `{}`."""
+def _extract_metric_means(group: pd.DataFrame, columns: list[str], use_median: bool = False) -> dict[str, float]:
+    """Return `{column: mean (or median, if `use_median`) value}` for each of `columns` present (after
+    annual-metadata unit-suffix matching) in `group`, skipping any that are missing or all-NaN. Empty
+    `group` yields `{}`. `use_median` is set when a component has a `building_condition` percentile band
+    (see module docstring) -- a median is the representative value for that band, matching
+    `building_condition.select_building_condition_sample()`'s own median.
+    """
     if group.empty:
         return {}
     values: dict[str, float] = {}
@@ -185,16 +209,24 @@ def _extract_metric_means(group: pd.DataFrame, columns: list[str]) -> dict[str, 
         matched = _find_column(group.columns, column)
         if not matched:
             continue
-        value = pd.to_numeric(group[matched], errors="coerce").mean()
+        series = pd.to_numeric(group[matched], errors="coerce")
+        value = series.median() if use_median else series.mean()
         if pd.isna(value):
             continue
         values[column] = float(value)
     return values
 
 
-def _extract_end_use_means(group: pd.DataFrame) -> dict[str, float]:
-    """Return `{end_use: mean value summed across fuels}` for `group`'s annual metadata columns (e.g.
-    "heating" sums electricity + gas + ... heating columns together). Empty `group` yields `{}`."""
+def _extract_end_use_means(group: pd.DataFrame, use_median: bool = False) -> dict[str, float]:
+    """Return `{end_use: mean (or median, if `use_median`) value summed across fuels}` for `group`'s annual
+    metadata columns (e.g. "heating" sums electricity + gas + ... heating columns together). Empty `group`
+    yields `{}`.
+
+    Note: in `use_median` mode this sums each fuel column's own median (not the median of their sum, which
+    isn't well-defined column-by-column) -- a reasonable approximation, but not identical to "the band's
+    median total heating energy" the way the `use_median=False` sum-of-means is exactly "the band's mean
+    total heating energy" (means of a sum equal the sum of means; medians don't).
+    """
     if group.empty:
         return {}
     values: dict[str, float] = {}
@@ -203,7 +235,8 @@ def _extract_end_use_means(group: pd.DataFrame) -> dict[str, float]:
             continue
         if variable.end_use in _NON_END_USE_LABELS or variable.source in _AGGREGATE_SOURCES:
             continue
-        value = pd.to_numeric(group[variable.name], errors="coerce").mean()
+        series = pd.to_numeric(group[variable.name], errors="coerce")
+        value = series.median() if use_median else series.mean()
         if pd.isna(value):
             continue
         values[variable.end_use] = values.get(variable.end_use, 0.0) + float(value)
@@ -229,6 +262,8 @@ def summarize_composite_metadata(
     min_sqft: float | None = None,
     max_sqft: float | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
+    building_condition: Mapping[tuple[str, str], float] | None = None,
+    building_condition_band: float = DEFAULT_BAND,
 ) -> CompositeMetadataSummary:
     """Summarize a composite building's expected annual energy use: total site energy, site EUI, and a
     by-fuel/by-end-use breakdown, weighted across every component's `fraction` (or `target_sqft`, if given).
@@ -236,7 +271,10 @@ def summarize_composite_metadata(
     Unlike `estimate_portfolio_energy()` (which reports the *population* mean and standard deviation across
     every sampled building of a type), this reports just the *mean* per component -- a faster, simpler
     "expected value" view matching `pull_composite_time_series()`'s one-representative-building-per-fraction
-    model, with no statistical error bars.
+    model, with no statistical error bars -- unless `building_condition` selects a specific percentile band
+    for a component, in which case that component instead uses the band's median (and its min/max becomes
+    that component's `annual_site_energy_kwh_range`; see module docstring and
+    `building_condition.select_building_condition_sample()`).
     """
     if target_sqft is None:
         composite.assert_normalized()
@@ -256,10 +294,39 @@ def summarize_composite_metadata(
             raise ValueError(f"No buildings found for component ({component.product}, {component.building_type}) in state={state!r}.")
 
         sqft_column = _find_column(metadata.columns, "in.sqft")
-        avg_sqft = float(pd.to_numeric(metadata[sqft_column], errors="coerce").mean()) if sqft_column else 0.0
-
         site_energy_column = _find_column(metadata.columns, "out.site_energy.total.energy_consumption")
-        annual_site_energy = float(pd.to_numeric(metadata[site_energy_column], errors="coerce").mean()) if site_energy_column else 0.0
+
+        percentile = (building_condition or {}).get(component.key)
+        condition_sample_size: int | None = None
+        energy_range: tuple[float, float] | None = None
+        source_metadata = metadata
+        use_median = False
+
+        if percentile is not None:
+            selection = select_building_condition_sample(
+                metadata,
+                percentile=percentile,
+                band=building_condition_band,
+                sqft_column=sqft_column,
+            )
+            source_metadata = metadata[metadata["bldg_id"].isin(selection.bldg_ids)]
+            condition_sample_size = selection.sample_size
+            energy_range = selection.metric_ranges.get("out.site_energy.total.energy_consumption")
+            use_median = True
+            if condition_sample_size < 3:
+                warnings.append(
+                    f"({component.product}, {component.building_type}): only {condition_sample_size} building(s) fall within "
+                    f"{selection.lower_percentile:.0f}-{selection.upper_percentile:.0f} percentile of site EUI -- this component's "
+                    "median/range may be noisy; consider a wider building_condition_band."
+                )
+
+        avg_sqft = float(pd.to_numeric(source_metadata[sqft_column], errors="coerce").mean()) if sqft_column else 0.0
+        energy_series = pd.to_numeric(source_metadata[site_energy_column], errors="coerce") if site_energy_column else None
+        if energy_series is not None:
+            energy_value = energy_series.median() if use_median else energy_series.mean()
+            annual_site_energy = 0.0 if pd.isna(energy_value) else float(energy_value)
+        else:
+            annual_site_energy = 0.0
 
         # Site EUI (energy per sqft) is an intensity, so it's unaffected by target_sqft-mode scaling either way.
         eui = (annual_site_energy * KWH_TO_KBTU) / avg_sqft if avg_sqft else 0.0
@@ -272,6 +339,7 @@ def summarize_composite_metadata(
             display_sqft = target_sqft[component.key]
             scale = display_sqft / avg_sqft
             display_energy = eui / KWH_TO_KBTU * display_sqft
+            display_energy_range = (energy_range[0] * scale, energy_range[1] * scale) if energy_range is not None else None
             warning = _sqft_bounds_warning(component, metadata, sqft_column, display_sqft)
             if warning:
                 warnings.append(warning)
@@ -279,6 +347,7 @@ def summarize_composite_metadata(
             scale = component.fraction
             display_sqft = avg_sqft
             display_energy = annual_site_energy
+            display_energy_range = energy_range
 
         component_summaries.append(
             ComponentMetadataSummary(
@@ -289,6 +358,9 @@ def summarize_composite_metadata(
                 avg_sqft=display_sqft,
                 annual_site_energy_kwh=display_energy,
                 site_eui_kbtu_per_ft2=eui,
+                building_condition_percentile=percentile,
+                condition_sample_size=condition_sample_size,
+                annual_site_energy_kwh_range=display_energy_range,
             )
         )
 
@@ -300,10 +372,11 @@ def summarize_composite_metadata(
         weighted_site_energy += scale * annual_site_energy
         weighted_building_count += len(metadata)
 
-        for variable in result_variables_from_columns(metadata.columns):
+        for variable in result_variables_from_columns(source_metadata.columns):
             if variable.metric != "energy_consumption" or variable.source is None or variable.end_use is None:
                 continue
-            value = pd.to_numeric(metadata[variable.name], errors="coerce").mean()
+            series = pd.to_numeric(source_metadata[variable.name], errors="coerce")
+            value = series.median() if use_median else series.mean()
             if pd.isna(value):
                 continue
             if variable.end_use == "total" and variable.source not in _AGGREGATE_SOURCES:
@@ -342,6 +415,8 @@ def compare_composite_measures(
     max_sqft: float | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
     metric_columns: list[str] | None = None,
+    building_condition: Mapping[tuple[str, str], float] | None = None,
+    building_condition_band: float = DEFAULT_BAND,
 ) -> CompositeMeasuresComparison:
     """Compare how several upgrade/measure packages change a composite building's annual energy, expressed
     as savings (absolute and %) per `metric_columns` column, plus a baseline-vs-measure by-end-use
@@ -349,8 +424,12 @@ def compare_composite_measures(
     `compare_buildstock_metadata_upgrades` (which compares upgrades for a single building type/product, not
     a fraction-weighted mix of several).
 
-    See the module docstring for `comparison_upgrades` entry format (bare vs. `"<product>:<upgrade_id>"`)
-    and the `fraction`/`target_sqft` sizing convention shared with `pull_composite_time_series()`.
+    See the module docstring for `comparison_upgrades` entry format (bare vs. `"<product>:<upgrade_id>"`),
+    the `fraction`/`target_sqft` sizing convention shared with `pull_composite_time_series()`, and
+    `building_condition`. For a `building_condition` component, the percentile band is selected *once* from
+    that component's baseline-upgrade sample, and the *same* `bldg_id`s are then used for every upgrade
+    being compared (not re-selected per upgrade) -- so "savings" reflect what happens to the same buildings
+    under each measure, not a comparison of two different, independently-selected samples.
     """
     if target_sqft is None:
         composite.assert_normalized()
@@ -394,11 +473,32 @@ def compare_composite_measures(
         combined_metadata = combined_metadata.copy()
         combined_metadata["upgrade"] = combined_metadata["upgrade"].astype(str)
 
+        percentile = (building_condition or {}).get(component.key)
+        use_median = percentile is not None
+        selected_bldg_ids: list[int] | None = None
+        if percentile is not None:
+            baseline_group_for_selection = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
+            if not baseline_group_for_selection.empty:
+                condition_selection = select_building_condition_sample(
+                    baseline_group_for_selection,
+                    percentile=percentile,
+                    band=building_condition_band,
+                )
+                selected_bldg_ids = condition_selection.bldg_ids
+                if condition_selection.sample_size < 3:
+                    warnings.append(
+                        f"({component.product}, {component.building_type}): only {condition_selection.sample_size} building(s) fall "
+                        f"within {condition_selection.lower_percentile:.0f}-{condition_selection.upper_percentile:.0f} percentile of "
+                        "site EUI -- this component's comparison may be noisy; consider a wider building_condition_band."
+                    )
+
         if target_sqft is not None:
             # Floor area doesn't change across upgrades for the same building type, so the baseline
             # upgrade's group average sqft is used as the scaling denominator for every upgrade.
             sqft_column = _find_column(combined_metadata.columns, "in.sqft")
             baseline_group_for_sqft = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
+            if selected_bldg_ids is not None:
+                baseline_group_for_sqft = baseline_group_for_sqft[baseline_group_for_sqft["bldg_id"].isin(selected_bldg_ids)]
             avg_sqft = (
                 float(pd.to_numeric(baseline_group_for_sqft[sqft_column], errors="coerce").mean())
                 if sqft_column and not baseline_group_for_sqft.empty
@@ -416,9 +516,11 @@ def compare_composite_measures(
             scale = component.fraction
 
         baseline_group = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
-        for column, value in _extract_metric_means(baseline_group, columns).items():
+        if selected_bldg_ids is not None:
+            baseline_group = baseline_group[baseline_group["bldg_id"].isin(selected_bldg_ids)]
+        for column, value in _extract_metric_means(baseline_group, columns, use_median=use_median).items():
             baseline_values[column] = baseline_values.get(column, 0.0) + scale * value
-        for end_use, value in _extract_end_use_means(baseline_group).items():
+        for end_use, value in _extract_end_use_means(baseline_group, use_median=use_median).items():
             baseline_end_use[end_use] = baseline_end_use.get(end_use, 0.0) + scale * value
 
         # Per-selection: this component uses its own upgrade id if the selection targets its product (or
@@ -426,10 +528,13 @@ def compare_composite_measures(
         for selection, sel_product, sel_upgrade_id in parsed_selections:
             effective_upgrade = sel_upgrade_id if (sel_product is None or sel_product == product) else baseline_upgrade
             group = combined_metadata[combined_metadata["upgrade"] == effective_upgrade]
-            for column, value in _extract_metric_means(group, columns).items():
+            if selected_bldg_ids is not None:
+                # Same bldg_ids as the baseline selection -- see docstring on why we don't re-select per upgrade.
+                group = group[group["bldg_id"].isin(selected_bldg_ids)]
+            for column, value in _extract_metric_means(group, columns, use_median=use_median).items():
                 bucket = per_selection_values.setdefault(selection, {})
                 bucket[column] = bucket.get(column, 0.0) + scale * value
-            for end_use, value in _extract_end_use_means(group).items():
+            for end_use, value in _extract_end_use_means(group, use_median=use_median).items():
                 end_use_bucket = per_selection_end_use.setdefault(selection, {})
                 end_use_bucket[end_use] = end_use_bucket.get(end_use, 0.0) + scale * value
 
