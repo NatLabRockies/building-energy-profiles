@@ -8,9 +8,10 @@ import {
   SimpleChanges,
   ViewChild,
 } from '@angular/core';
-import { Chart, ChartConfiguration, ChartType, registerables } from 'chart.js';
+import { Chart, ChartConfiguration, ChartType } from 'chart.js';
 
-Chart.register(...registerables);
+// Chart.js registerables + the zoom/annotation plugins are registered once, app-wide, in
+// chartjs-setup.ts (imported from main.ts) -- no per-component registration needed here.
 
 /** Thin wrapper around Chart.js (used directly rather than an ng2-charts-style Angular wrapper, to avoid
  * its Angular-version peer-dependency churn) -- pass a standard Chart.js `data`/`options`/`type` and this

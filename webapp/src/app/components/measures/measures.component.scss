@@ -108,6 +108,33 @@
   margin-top: 1.5rem;
 }
 
+.measures-grid {
+  margin: 1rem 0;
+  --ag-border-radius: 8px;
+  --ag-font-size: 0.85rem;
+
+  ::ng-deep .product-badge {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.02em;
+    font-size: 0.7rem;
+
+    &.comstock {
+      background: #eef2ff;
+      color: var(--color-primary-dark);
+    }
+
+    &.resstock {
+      background: #ecfdf5;
+      color: #047857;
+    }
+  }
+}
+
+
 .ldc-box,
 .end-use-box {
   height: 360px;

@@ -1,0 +1,89 @@
+// Left-nav app shell built on Angular Material's mat-sidenav-container/mat-sidenav: a permanent
+// side panel on desktop/tablet, an over-content drawer (toggled via the mobile toolbar) on phone
+// widths. Colors/spacing reuse the app's existing --color-* custom properties so the sidebar
+// matches the rest of the (still mostly plain-CSS) UI; a couple of Tailwind utility classes handle
+// simple flex layout in the template.
+
+:host {
+  display: block;
+  height: 100%;
+}
+
+.app-shell {
+  height: 100%;
+}
+
+.app-sidenav {
+  width: 248px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--color-border);
+}
+
+.sidenav-brand {
+  padding: 1.25rem 1.25rem 1rem;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.brand-mark {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 36px;
+  height: 36px;
+  flex-shrink: 0;
+  border-radius: var(--radius);
+  background: var(--color-primary);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.8rem;
+  letter-spacing: 0.02em;
+}
+
+.brand-title {
+  font-weight: 700;
+  font-size: 0.95rem;
+  line-height: 1.3;
+}
+
+.brand-subtitle {
+  font-size: 0.72rem;
+  color: var(--color-muted);
+  line-height: 1.3;
+}
+
+.sidenav-nav {
+  flex: 1;
+  overflow-y: auto;
+  padding-top: 0.5rem;
+}
+
+.sidenav-footer {
+  padding: 0.75rem;
+  border-top: 1px solid var(--color-border);
+
+  .footer-link {
+    width: 100%;
+    color: var(--color-muted);
+
+    mat-icon {
+      margin-right: 0.5rem;
+    }
+  }
+}
+
+.mobile-toolbar {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.mobile-toolbar-title {
+  margin-left: 0.5rem;
+  font-weight: 600;
+  font-size: 1rem;
+}
+
+.content {
+  min-height: 100%;
+}

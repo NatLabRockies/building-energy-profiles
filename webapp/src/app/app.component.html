@@ -1,9 +1,60 @@
-<nav class="top-nav">
-  <span class="brand">BuildStock Composite Explorer</span>
-  <a routerLink="/" routerLinkActive="active" [routerLinkActiveOptions]="{ exact: true }">Builder</a>
-  <a routerLink="/dashboard" routerLinkActive="active">Dashboard</a>
-  <a routerLink="/timeseries" routerLinkActive="active">Time Series</a>
-  <a routerLink="/measures" routerLinkActive="active">Measures</a>
-</nav>
+<mat-sidenav-container class="app-shell">
+  <mat-sidenav
+    #sidenav
+    class="app-sidenav"
+    [mode]="isHandset() ? 'over' : 'side'"
+    [opened]="!isHandset()"
+    [fixedInViewport]="isHandset()"
+  >
+    <div class="sidenav-brand flex items-center gap-3">
+      <span class="brand-mark">BC</span>
+      <span class="brand-text flex flex-col">
+        <span class="brand-title">BuildStock</span>
+        <span class="brand-subtitle">Composite Explorer</span>
+      </span>
+    </div>
 
-<router-outlet></router-outlet>
+    <mat-nav-list class="sidenav-nav">
+      @for (item of navItems; track item.path) {
+        <a
+          mat-list-item
+          [routerLink]="item.path"
+          routerLinkActive
+          #rla="routerLinkActive"
+          [routerLinkActiveOptions]="{ exact: !!item.exact }"
+          [activated]="rla.isActive"
+        >
+          <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+          <span matListItemTitle>{{ item.label }}</span>
+        </a>
+      }
+    </mat-nav-list>
+
+    <div class="sidenav-footer">
+      <a
+        mat-button
+        class="footer-link"
+        href="https://github.com/SEED-platform/buildstock-processor"
+        target="_blank"
+        rel="noopener"
+      >
+        <mat-icon>code</mat-icon>
+        Source on GitHub
+      </a>
+    </div>
+  </mat-sidenav>
+
+  <mat-sidenav-content>
+    @if (isHandset()) {
+      <mat-toolbar color="primary" class="mobile-toolbar">
+        <button mat-icon-button (click)="sidenav.toggle()" aria-label="Toggle navigation">
+          <mat-icon>menu</mat-icon>
+        </button>
+        <span class="mobile-toolbar-title">{{ title }}</span>
+      </mat-toolbar>
+    }
+    <main class="content">
+      <router-outlet></router-outlet>
+    </main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

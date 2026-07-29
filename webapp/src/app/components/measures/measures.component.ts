@@ -1,13 +1,18 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, computed, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
+import { AgGridAngular } from 'ag-grid-angular';
+import { ColDef, themeMaterial, ValueFormatterParams } from 'ag-grid-community';
 import { ChartConfiguration } from 'chart.js';
+// Side-effect import only -- brings in chartjs-plugin-zoom's TypeScript module augmentation so
+// `plugins.zoom` below type-checks. The plugin itself is registered app-wide in chartjs-setup.ts.
+import 'chartjs-plugin-zoom';
 import { forkJoin } from 'rxjs';
 
 import { ApiService } from '../../services/api.service';
 import { CompositeStateService } from '../../services/composite-state.service';
-import { EndUseValue, MeasureInfo, MeasuresCompareResponse, Product, TimeseriesResponse } from '../../models/api.models';
+import { EndUseValue, MeasureInfo, MeasureSavings, MeasuresCompareResponse, Product, TimeseriesResponse } from '../../models/api.models';
 import { CHART_COLORS } from '../../models/chart-colors';
 import { ChartComponent } from '../chart/chart.component';
 
@@ -28,7 +33,7 @@ const PRODUCT_LABELS: Record<Product, string> = {
 @Component({
   selector: 'app-measures',
   standalone: true,
-  imports: [CommonModule, FormsModule, ChartComponent],
+  imports: [CommonModule, FormsModule, ChartComponent, AgGridAngular],
   templateUrl: './measures.component.html',
   styleUrl: './measures.component.scss',
 })
@@ -65,7 +70,14 @@ export class MeasuresComponent implements OnInit {
     responsive: true,
     maintainAspectRatio: false,
     elements: { point: { radius: 0 } },
-    plugins: { legend: { display: true } },
+    plugins: {
+      legend: { display: true },
+      zoom: {
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+        pan: { enabled: true, mode: 'x' },
+        limits: { x: { min: 'original', max: 'original' } },
+      },
+    },
     scales: {
       x: { title: { display: true, text: 'Hours, sorted descending' } },
       // Hourly-resampled energy (kWh per hour) is numerically equal to average power (kW) over that
@@ -83,6 +95,61 @@ export class MeasuresComponent implements OnInit {
   };
 
   readonly maxSelectable = MAX_SELECTABLE_MEASURES;
+
+  // AG Grid setup for the savings comparison table. `themeMaterial` keeps the grid's look
+  // consistent with the rest of the app now that Angular Material is the base component library.
+  readonly gridTheme = themeMaterial;
+  readonly defaultColDef: ColDef = { sortable: true, resizable: true, filter: true };
+  readonly savingsColDefs: ColDef<MeasureSavings>[] = [
+    {
+      headerName: 'Measure',
+      field: 'name',
+      flex: 2,
+      minWidth: 220,
+      valueGetter: (p) => p.data?.name ?? p.data?.upgrade_id ?? '',
+    },
+    {
+      headerName: 'Type',
+      field: 'product',
+      width: 130,
+      valueFormatter: (p: ValueFormatterParams<MeasureSavings, Product | null | undefined>) =>
+        p.value ? PRODUCT_LABELS[p.value] : '',
+      cellClass: (p) => (p.value ? ['product-badge', p.value] : []),
+    },
+    {
+      headerName: 'Baseline (kWh)',
+      field: 'baseline_kwh',
+      type: 'numericColumn',
+      valueFormatter: (p) => this.formatKwh(p.value),
+    },
+    {
+      headerName: 'Upgrade (kWh)',
+      field: 'upgrade_kwh',
+      type: 'numericColumn',
+      valueFormatter: (p) => this.formatKwh(p.value),
+    },
+    {
+      headerName: 'Savings (kWh)',
+      field: 'absolute_savings_kwh',
+      type: 'numericColumn',
+      valueFormatter: (p) => this.formatKwh(p.value),
+      cellClassRules: { error: (p) => (p.value ?? 0) < 0 },
+    },
+    {
+      headerName: 'Savings (%)',
+      field: 'pct_savings',
+      type: 'numericColumn',
+      valueFormatter: (p) => (p.value == null ? '' : `${p.value.toFixed(1)}%`),
+      cellClassRules: { error: (p) => (p.value ?? 0) < 0 },
+    },
+  ];
+
+  /** Row data for the savings grid -- recomputed whenever a new compare() result comes in. */
+  readonly savingsRowData = computed<MeasureSavings[]>(() => this.compareResult()?.results[DEFAULT_SAVINGS_COLUMN] ?? []);
+
+  private formatKwh(value: number | null | undefined): string {
+    return value == null ? '' : Math.round(value).toLocaleString('en-US');
+  }
 
   constructor(
     private readonly api: ApiService,

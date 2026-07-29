@@ -91,33 +91,14 @@
       </div>
     }
 
-    <table>
-      <thead>
-        <tr>
-          <th>Measure</th>
-          <th>Baseline (kWh)</th>
-          <th>Upgrade (kWh)</th>
-          <th>Savings (kWh)</th>
-          <th>Savings (%)</th>
-        </tr>
-      </thead>
-      <tbody>
-        @for (s of result.results['out.site_energy.total.energy_consumption']; track s.upgrade_id + (s.product || '')) {
-          <tr>
-            <td>
-              @if (s.product) {
-                <span class="product-badge" [class]="s.product">{{ productLabels[s.product] }}</span>
-              }
-              {{ s.name || s.upgrade_id }}
-            </td>
-            <td>{{ s.baseline_kwh | number: '1.0-0' }}</td>
-            <td>{{ s.upgrade_kwh | number: '1.0-0' }}</td>
-            <td [class.error]="s.absolute_savings_kwh < 0">{{ s.absolute_savings_kwh | number: '1.0-0' }}</td>
-            <td [class.error]="s.absolute_savings_kwh < 0">{{ s.pct_savings | number: '1.1-1' }}%</td>
-          </tr>
-        }
-      </tbody>
-    </table>
+    <ag-grid-angular
+      class="measures-grid"
+      [theme]="gridTheme"
+      [rowData]="savingsRowData()"
+      [columnDefs]="savingsColDefs"
+      [defaultColDef]="defaultColDef"
+      domLayout="autoHeight"
+    ></ag-grid-angular>
 
     <h2>Detail: load duration curve &amp; end-use breakdown</h2>
     <p class="chart-note">

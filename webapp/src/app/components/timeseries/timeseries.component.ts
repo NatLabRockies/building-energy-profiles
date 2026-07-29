@@ -1,8 +1,11 @@
 import { Component, OnInit, signal } from '@angular/core';
-import { CommonModule } from '@angular/common';
+
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ChartConfiguration } from 'chart.js';
+// Side-effect import only -- brings in chartjs-plugin-zoom's TypeScript module augmentation so
+// `plugins.zoom` below type-checks. The plugin itself is registered app-wide in chartjs-setup.ts.
+import 'chartjs-plugin-zoom';
 import { forkJoin, of } from 'rxjs';
 
 import { ApiService } from '../../services/api.service';
@@ -25,7 +28,7 @@ const COLUMN_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-timeseries',
   standalone: true,
-  imports: [CommonModule, FormsModule, ChartComponent, HeatmapComponent],
+  imports: [FormsModule, ChartComponent, HeatmapComponent],
   templateUrl: './timeseries.component.html',
   styleUrl: './timeseries.component.scss',
 })
@@ -46,7 +49,16 @@ export class TimeseriesComponent implements OnInit {
     responsive: true,
     maintainAspectRatio: false,
     elements: { point: { radius: 0 } },
-    plugins: { legend: { display: true } },
+    plugins: {
+      legend: { display: true },
+      // Scroll-wheel/pinch to zoom, click-drag to pan -- useful for a full 8760-hour load duration
+      // curve where the interesting detail (top/bottom of the curve) can be a small fraction of it.
+      zoom: {
+        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
+        pan: { enabled: true, mode: 'x' },
+        limits: { x: { min: 'original', max: 'original' } },
+      },
+    },
     scales: {
       x: { title: { display: true, text: 'Hours, sorted descending' } },
       // Hourly-resampled energy (kWh per hour) is numerically equal to average power (kW) over that
