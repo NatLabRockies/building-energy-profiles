@@ -20,7 +20,13 @@ class EnergyStarTypeInfo(BaseModel):
 
 
 class EnergyStarComponentIn(BaseModel):
-    """One ENERGY STAR property type + floor-area share, as entered by a user.
+    """One composite component + floor-area share, as entered by a user -- either an ENERGY STAR Portfolio
+    Manager property type (resolved to a BuildStock building type via the packaged crosswalk) or a
+    ComStock/ResStock building type entered directly, skipping the crosswalk entirely.
+
+    Exactly one of `energy_star_property_type` or (`product` + `building_type`) must be set -- see
+    `_check_exactly_one_type_source`. All components within one `CompositeResolveRequest` must use the same
+    type source -- see `CompositeResolveRequest._check_consistent_type_source`.
 
     Exactly one of `fraction` (a 0-1 floor-area share) or `sqft` (an absolute square footage) must be set.
     All components within one `CompositeResolveRequest` must use the same mode -- see that model's
@@ -28,25 +34,39 @@ class EnergyStarComponentIn(BaseModel):
     an actual building of that square footage, rather than just a relative share of an unspecified total.
     """
 
-    energy_star_property_type: str
+    energy_star_property_type: str | None = None
+    product: Product | None = None
+    building_type: str | None = None
     fraction: float | None = Field(default=None, gt=0, le=1)
     sqft: float | None = Field(default=None, gt=0)
 
     @model_validator(mode="after")
+    def _check_exactly_one_type_source(self) -> EnergyStarComponentIn:
+        has_energy_star = self.energy_star_property_type is not None
+        has_buildstock = self.product is not None or self.building_type is not None
+        if has_energy_star == has_buildstock:
+            raise ValueError(
+                "Component must set exactly one of 'energy_star_property_type' or ('product' + 'building_type'), not both/neither."
+            )
+        if has_buildstock and (self.product is None or self.building_type is None):
+            raise ValueError("Component set one of 'product'/'building_type' directly -- both must be set together.")
+        return self
+
+    @model_validator(mode="after")
     def _check_exactly_one_of_fraction_or_sqft(self) -> EnergyStarComponentIn:
         if (self.fraction is None) == (self.sqft is None):
-            raise ValueError(
-                f"Component {self.energy_star_property_type!r} must set exactly one of 'fraction' or 'sqft', not both/neither."
-            )
+            label = self.energy_star_property_type or f"{self.building_type} ({self.product})"
+            raise ValueError(f"Component {label!r} must set exactly one of 'fraction' or 'sqft', not both/neither.")
         return self
 
 
 class CompositeResolveRequest(BaseModel):
     components: list[EnergyStarComponentIn] = Field(min_length=1)
-    state: str | None = Field(default=None, min_length=2, max_length=2)
-    """2-letter state abbreviation. Optional, but required (alongside sqft mode) to auto-select a
-    representative bldg_id per component -- see `bldg_id` on `ResolvedComponent`/`CompositeComponentSpec`.
-    Without it, resolution stays a fast, offline crosswalk lookup with no bldg_id selected."""
+    state: str | None = Field(default=None, min_length=2, max_length=3, pattern="^([A-Za-z]{2}|All)$")
+    """2-letter state abbreviation, or "All" for the entire USA. Optional, but required (alongside sqft
+    mode) to auto-select a representative bldg_id per component -- see `bldg_id` on
+    `ResolvedComponent`/`CompositeComponentSpec`. Without it, resolution stays a fast, offline crosswalk
+    lookup with no bldg_id selected."""
     county_name: str | list[str] = "All"
 
     @model_validator(mode="after")
@@ -56,9 +76,21 @@ class CompositeResolveRequest(BaseModel):
             raise ValueError("All components must use the same mode -- either all 'fraction' (%) or all 'sqft', not a mix of both.")
         return self
 
+    @model_validator(mode="after")
+    def _check_consistent_type_source(self) -> CompositeResolveRequest:
+        sources = {"energy_star" if c.energy_star_property_type is not None else "buildstock" for c in self.components}
+        if len(sources) > 1:
+            raise ValueError(
+                "All components must use the same type source -- either all ENERGY STAR property types or all "
+                "ComStock/ResStock building types, not a mix of both."
+            )
+        return self
+
 
 class ResolvedComponent(BaseModel):
     energy_star_property_type: str
+    """The entered ENERGY STAR property type, or (for a directly-entered ComStock/ResStock building type,
+    skipping the crosswalk) a `"<building_type> (<product>)"` display label standing in for it."""
     product: Product | None
     building_type: str | None
     fraction: float
@@ -114,7 +146,8 @@ class CompositeResolveResponse(BaseModel):
 
 class CompositeRequestBase(BaseModel):
     components: list[CompositeComponentSpec] = Field(min_length=1)
-    state: str = Field(min_length=2, max_length=2)
+    state: str = Field(min_length=2, max_length=3, pattern="^([A-Za-z]{2}|All)$")
+    """2-letter state abbreviation, or "All" for the entire USA."""
     county_name: str | list[str] = "All"
     upgrade: str = "0"
     min_sqft: float | None = None
@@ -182,6 +215,12 @@ class TimeseriesResponse(BaseModel):
     series: list[dict[str, Any]]
     component_labels: dict[str, str]
     """{"product:building_type" -> display label} for every requested component."""
+    component_bldg_ids: dict[str, int] = Field(default_factory=dict)
+    """{"product:building_type" -> bldg_id} identifying the exact real building/dwelling-unit whose time
+    series was actually downloaded and used for each component -- since this endpoint only pulls a single
+    representative building per component (not every sampled one, unlike `get_metadata_summary`'s
+    population-mean aggregates), surfacing which one it picked makes an otherwise-arbitrary selection (the
+    first metadata row found, absent an explicit `bldg_ids`/sqft-mode override) inspectable/reproducible."""
     warnings: list[str] = Field(default_factory=list)
     """Data-quality warnings, e.g. an entered target square footage (sqft mode) falling outside the
     observed in.sqft range of the sampled BuildStock buildings for a component."""
@@ -207,6 +246,140 @@ class AvailableStatesResponse(BaseModel):
     product: Product
     states: list[str]
     """Every 2-letter state abbreviation with published metadata for this product's release."""
+
+
+class BuildingTypesResponse(BaseModel):
+    ok: bool
+    product: Product
+    building_types: list[str]
+    """Every ComStock/ResStock building type for this product (e.g. "MediumOffice" or "Multi-Family with
+    5+ Units"), for a building-type dropdown when entering a composite directly (skipping the ENERGY STAR
+    crosswalk) -- see `EnergyStarComponentIn.product`/`building_type`. Excludes the special "All" sentinel
+    accepted elsewhere by the processor constructors, which isn't a real, individually-selectable type."""
+
+
+class EuiDistributionRequest(BaseModel):
+    """Requests the composite's combined site EUI (kBtu/ft2) percentile curve, plus which real building
+    each `CompositeComponent`'s percentile targets (5th/25th/50th/75th/95th percentile + mean) resolve to --
+    used by the builder page to replace an otherwise-arbitrary "first building found" representative
+    selection with an explicit, user-chosen point along the actual distribution of sampled buildings."""
+
+    components: list[CompositeComponentSpec] = Field(min_length=1)
+    state: str = Field(min_length=2, max_length=3, pattern="^([A-Za-z]{2}|All)$")
+    county_name: str | list[str] = "All"
+    upgrade: str = "0"
+    min_sqft: float | None = None
+    max_sqft: float | None = None
+    curve_points: int = Field(default=101, ge=11, le=1001)
+    """How many evenly-spaced percentile points (0-100 inclusive) to return along the curve -- enough for
+    a smooth, clickable line chart without sending every individual sampled building's raw value."""
+
+
+class EuiPercentileSelection(BaseModel):
+    label: str
+    """Display label, e.g. "5th percentile", "Median (50th)", "Average"."""
+    percentile: float | None
+    """Target percentile (0-100) along the composite's site EUI distribution, or None for "Average" (which
+    picks the sample closest to the plain mean EUI rather than a rank-based percentile)."""
+    eui_kbtu_per_ft2: float
+    """The actual site EUI of the building(s) selected for this percentile (composite-weighted average
+    across components, since each component may resolve to a different real building)."""
+    bldg_ids: dict[str, int]
+    """{"product:building_type" -> bldg_id} - the real representative building selected for each component
+    at this percentile target."""
+
+
+class EuiCurvePoint(BaseModel):
+    eui_kbtu_per_ft2: float
+    """Site EUI (kBtu/ft2) at this point along the x-axis."""
+    density: float
+    """Relative probability density at this site EUI, peak-normalized so the curve's highest point is
+    exactly 1.0 (not integral-normalized to area=1) -- a true density shape (0-1 y-axis), not a percentile
+    rank. Use `EuiDistributionResponse.percentiles`/`POST /api/composite/eui-percentile-buildings` to
+    resolve an actual percentile pick to a real building; this curve is for visualizing the distribution's
+    shape only."""
+    percentile: float
+    """This point's percentile rank (0-100) along the composite's site EUI distribution -- lets the
+    frontend map a click on the density curve back to a percentile for the buildings lookup, without the
+    y-axis itself needing to *be* percentile."""
+
+
+class EuiDistributionResponse(BaseModel):
+    ok: bool
+    state: str
+    curve: list[EuiCurvePoint]
+    """The composite's site EUI probability density -- a smooth curve (not a binned histogram) with
+    `density` peak-normalized to 1.0. Clicking anywhere along the curve's x-position resolves to the
+    nearest point's `percentile`, then confirmed/refined via `POST /api/composite/eui-percentile-buildings`
+    (see that endpoint for the actual nearby-buildings lookup)."""
+    mean_eui_kbtu_per_ft2: float
+    median_eui_kbtu_per_ft2: float
+    sample_size: int
+    """Total number of underlying metadata rows (buildings/dwelling-units) combined across every component
+    to build this distribution."""
+    percentiles: list[EuiPercentileSelection]
+    """Ready-to-use selections for the 5th/25th/50th/75th/95th percentile + average "auto-pick" buttons."""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class EuiPercentileBuildingsRequest(BaseModel):
+    """Requests the real sampled buildings near a user-clicked percentile on the EUI curve, for each
+    composite component -- shown in a table under the chart so the user can see exactly which building(s)
+    a percentile pick actually corresponds to (there can be several equally-close candidates in a finite
+    sample, especially in a flat/dense part of the curve)."""
+
+    components: list[CompositeComponentSpec] = Field(min_length=1)
+    state: str = Field(min_length=2, max_length=3, pattern="^([A-Za-z]{2}|All)$")
+    county_name: str | list[str] = "All"
+    upgrade: str = "0"
+    min_sqft: float | None = None
+    max_sqft: float | None = None
+    percentile: float = Field(ge=0, le=100)
+    band: float = Field(default=2.0, ge=0, le=50)
+    """+/- percentile points around `percentile` to include as "nearby" candidates (default 2.0 -- a
+    narrower band than `building_condition.DEFAULT_BAND`'s 5.0, since this is for *displaying* nearby
+    options to the user, not computing a single representative median)."""
+    max_candidates_per_component: int = Field(default=10, ge=1, le=100)
+
+
+class EuiCandidateBuilding(BaseModel):
+    bldg_id: int
+    eui_kbtu_per_ft2: float
+    sqft: float
+    """The sampled building's own floor area, as-is in the underlying metadata -- for a ResStock (ResStock
+    multifamily/single-family) component this is ONE dwelling's floor area, not the component's requested
+    total. See `scaled_sqft`/`unit_multiplier` for how this maps to the component's actual target size."""
+    scaled_sqft: float | None = None
+    """`sqft` scaled up (or down) by this component's implied unit multiplier to match its requested total
+    square footage -- e.g. for a multifamily component, the sample dwelling's sqft times however many units
+    it takes to reach the target total. `None` in fraction mode (no target sqft to scale to)."""
+    unit_multiplier: float | None = None
+    """How many of this sampled dwelling/building it takes to reach the component's target sqft
+    (`target_sqft / sqft`) -- e.g. requesting 75,000 sqft of multifamily against a ~1,100 sqft sample
+    dwelling implies ~68 units. Always 1.0 for a ComStock component sized to its own target (one row IS one
+    whole building), but can differ from 1.0 there too if the closest sampled building isn't an exact size
+    match. `None` in fraction mode."""
+    percentile_rank: float
+    """This building's own rank (0-100) along its component's site EUI distribution."""
+
+
+class EuiPercentileBuildingsComponent(BaseModel):
+    product: Product
+    building_type: str
+    label: str | None
+    selected_bldg_id: int
+    """The single building that would actually be used (closest in rank to `percentile`) -- matches what
+    `pickPercentile()`-style selection elsewhere resolves to for this exact percentile."""
+    candidates: list[EuiCandidateBuilding]
+    """Every real building within `band` percentile points of the target, sorted by closeness to
+    `percentile` -- `selected_bldg_id` is always `candidates[0].bldg_id` (if `candidates` is non-empty)."""
+
+
+class EuiPercentileBuildingsResponse(BaseModel):
+    ok: bool
+    percentile: float
+    components: list[EuiPercentileBuildingsComponent]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class AvailableCountiesResponse(BaseModel):
@@ -271,6 +444,43 @@ class MosExportRequest(CompositeRequestBase):
 
     heating_columns: list[str] | None = None
     cooling_columns: list[str] | None = None
+
+
+class BuildingEnergyModelRequest(CompositeRequestBase):
+    """Requests the actual downloadable OpenStudio building energy model file(s) for a composite's
+    representative building(s) -- one per component, since each component is represented by exactly one
+    real sampled building (see `TimeseriesResponse.component_bldg_ids`).
+
+    `bldg_ids` mirrors `TimeseriesRequest.bldg_ids` -- an explicit `{"product:building_type": bldg_id}`
+    override, merged with each component's own persisted `CompositeComponentSpec.bldg_id`, so the exact same
+    representative building already shown/used elsewhere (e.g. the builder's percentile pick, or the
+    Timeseries page's "Representative building(s)" box) is what gets downloaded here too, instead of an
+    independently (and possibly different) auto-selected one.
+    """
+
+    bldg_ids: dict[str, int] | None = None
+
+
+class ComponentBuildingModel(BaseModel):
+    product: Product
+    building_type: str
+    label: str | None
+    bldg_id: int
+    filename: str
+    """The building energy model's own filename, e.g. "comstock-bldg0000123-up00.osm.gz" -- included in a
+    multi-component `.zip` bundle under this name."""
+
+
+class BuildingEnergyModelResponse(BaseModel):
+    """Non-file metadata about a building energy model download -- used by `GET
+    /api/composite/building-models/manifest` so the UI can show which real building/file each component
+    will download before actually fetching the (potentially large) model file(s) themselves."""
+
+    ok: bool
+    state: str
+    upgrade: str
+    components: list[ComponentBuildingModel]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

@@ -106,7 +106,8 @@ Inspect columns and timestamps instead of assuming a fixed schema or interval.
 The package uses file existence as its cache:
 
 - Raw metadata partitions are reused when their expected files exist.
-- Filtered metadata CSV names include release, geography, building type, floor-area range, and upgrade.
+- Filtered metadata Parquet names include release, geography, building type, floor-area range, and upgrade.
+- Legacy filtered metadata CSV caches are ignored; the processor rebuilds them from raw OEDI Parquet partitions.
 - Time-series files are reused by building ID and upgrade.
 - Upgrade lookups and crosswalks are cached locally.
 

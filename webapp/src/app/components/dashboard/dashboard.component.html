@@ -52,7 +52,7 @@
         <h3>Annual energy by fuel</h3>
         <div class="chart-canvas-wrap">
           @if (byFuelChartData) {
-            <app-chart type="pie" [data]="byFuelChartData" [options]="pieOptions"></app-chart>
+            <app-plot [data]="byFuelChartData" [layout]="pieLayout"></app-plot>
           }
         </div>
       </div>
@@ -60,7 +60,7 @@
         <h3>Annual energy by end use</h3>
         <div class="chart-canvas-wrap">
           @if (byEndUseChartData) {
-            <app-chart type="bar" [data]="byEndUseChartData" [options]="stackedBarOptions"></app-chart>
+            <app-plot [data]="byEndUseChartData" [layout]="stackedBarLayout"></app-plot>
           }
         </div>
       </div>

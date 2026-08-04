@@ -1,10 +1,32 @@
 <div class="page">
   <h1>Composite Building Explorer</h1>
   <p class="intro">
-    Enter a single ENERGY STAR building type, or a floor-area-weighted mix of several -- by percentage or
-    by absolute square footage -- and we'll resolve each to a real ComStock/ResStock building type via the
-    packaged ENERGY STAR crosswalk.
+    Enter a single building type, or a floor-area-weighted mix of several -- by percentage or by absolute
+    square footage -- either as an ENERGY STAR Portfolio Manager property type (resolved to a real
+    ComStock/ResStock building type via the packaged crosswalk) or as a ComStock/ResStock building type
+    directly.
   </p>
+
+  <div class="mode-toggle" role="radiogroup" aria-label="Building type source">
+    <label>
+      <input
+        type="radio"
+        name="typeSource"
+        [checked]="typeSource() === 'energy_star'"
+        (change)="setTypeSource('energy_star')"
+      />
+      ENERGY STAR Property Types
+    </label>
+    <label>
+      <input
+        type="radio"
+        name="typeSource"
+        [checked]="typeSource() === 'buildstock'"
+        (change)="setTypeSource('buildstock')"
+      />
+      ComStock/ResStock Types
+    </label>
+  </div>
 
   <div class="mode-toggle" role="radiogroup" aria-label="Entry mode">
     <label>
@@ -21,12 +43,25 @@
     <div class="rows" formArrayName="rows">
       @for (row of rows.controls; track $index; let i = $index) {
         <div class="row" [formGroupName]="i">
-          <select formControlName="energyStarType" class="type-select">
-            <option value="" disabled>Select a building type&hellip;</option>
-            @for (t of energyStarTypes(); track t.energy_star_property_type) {
-              <option [value]="t.energy_star_property_type">{{ t.energy_star_property_type }}</option>
-            }
-          </select>
+          @if (typeSource() === 'energy_star') {
+            <select formControlName="energyStarType" class="type-select">
+              <option value="" disabled>Select a building type&hellip;</option>
+              @for (t of energyStarTypes(); track t.energy_star_property_type) {
+                <option [value]="t.energy_star_property_type">{{ t.energy_star_property_type }}</option>
+              }
+            </select>
+          } @else {
+            <select formControlName="product" class="product-select" (change)="onProductChanged(i)">
+              <option value="comstock">ComStock</option>
+              <option value="resstock">ResStock</option>
+            </select>
+            <select formControlName="buildingType" class="type-select">
+              <option value="" disabled>Select a building type&hellip;</option>
+              @for (t of buildingTypesFor(row.get('product')!.value); track t) {
+                <option [value]="t">{{ t }}</option>
+              }
+            </select>
+          }
           <input
             type="number"
             formControlName="amount"
@@ -56,6 +91,7 @@
       <label>
         State
         <select formControlName="state" class="state-input">
+          <option value="All">All (entire USA)</option>
           @if (loadingStates()) {
             <option value="">Loading&hellip;</option>
           }
@@ -72,6 +108,9 @@
             <option [value]="c">{{ c }}</option>
           }
         </select>
+        @if (isAllStates) {
+          <span class="loading-hint">Not available when State is "All" (entire USA).</span>
+        }
         @if (loadingCounties()) {
           <span class="loading-hint">Loading counties&hellip;</span>
         }
@@ -103,7 +142,7 @@
       <table>
         <thead>
           <tr>
-            <th>ENERGY STAR type</th>
+            <th>{{ typeSource() === 'energy_star' ? 'ENERGY STAR type' : 'Entered type' }}</th>
             <th>BuildStock type</th>
             @if (mode() === 'sqft') {
               <th>Sqft</th>
@@ -116,7 +155,7 @@
           </tr>
         </thead>
         <tbody>
-          @for (c of result.components; track c.energy_star_property_type) {
+          @for (c of result.components; track $index) {
             <tr [class.unmapped]="c.match_quality === 'unmapped'">
               <td>{{ c.energy_star_property_type }}</td>
               <td>{{ c.building_type ? c.building_type + ' (' + c.product + ')' : '—' }}</td>
@@ -145,11 +184,172 @@
         </p>
       }
 
-      @if (result.resolvable.length > 0) {
-        <button class="primary" (click)="continueToDashboard()">Continue to dashboard &rarr;</button>
-      } @else {
+      @if (result.resolvable.length === 0) {
         <p class="error">None of the entered types could be resolved -- try a different ENERGY STAR type.</p>
       }
     </section>
+  }
+
+  @if (resolveResult(); as result) {
+    @if (result.resolvable.length > 0) {
+      <section class="eui-distribution">
+        <h2>Pick a representative building</h2>
+        <p class="intro">
+          Each component is normally represented by one sampled building. Rather than an arbitrary pick,
+          click anywhere on the line below to choose where along the composite's site EUI (kBtu/ft2)
+          distribution that representative building should come from -- e.g. the low end for a
+          below-average/inefficient building, the high end for a highly efficient one -- or use one of the
+          preset buttons.
+        </p>
+
+        @if (loadingEuiDistribution()) {
+          <p>Loading distribution&hellip;</p>
+        }
+        @if (euiDistributionError()) {
+          <p class="error">{{ euiDistributionError() }}</p>
+        }
+
+        @if (euiDistribution(); as distribution) {
+          <div class="eui-chart">
+            <app-plot [data]="euiChartData!" [layout]="euiChartLayout" [onPointClick]="onEuiChartClickHandler"></app-plot>
+          </div>
+          <p class="eui-stats">
+            Mean: {{ distribution.mean_eui_kbtu_per_ft2 | number: '1.0-1' }} kBtu/ft2 &middot; Median:
+            {{ distribution.median_eui_kbtu_per_ft2 | number: '1.0-1' }} kBtu/ft2 &middot; Sample size:
+            {{ distribution.sample_size | number }} buildings
+          </p>
+
+          <div class="percentile-buttons">
+            @for (p of distribution.percentiles; track p.label) {
+              <button
+                type="button"
+                class="percentile-btn"
+                [class.selected]="p.percentile !== null && selectedPercentileValue() !== null && abs(p.percentile - selectedPercentileValue()!) < 0.5"
+                (click)="pickPresetPercentile(p.percentile ?? 50)"
+              >
+                {{ p.label }}<br />
+                <span class="percentile-value">{{ p.eui_kbtu_per_ft2 | number: '1.0-1' }} kBtu/ft2</span>
+              </button>
+            }
+          </div>
+
+          @if (selectedPercentileValue(); as percentile) {
+            <p class="selected-note">
+              &#9989; Selected the <strong>{{ percentile | number: '1.0-0' }}th percentile</strong> --
+              see the matching building below.
+            </p>
+
+            @if (loadingPercentileBuildings()) {
+              <p>Looking up nearby buildings&hellip;</p>
+            }
+            @if (percentileBuildingsError()) {
+              <p class="error">{{ percentileBuildingsError() }}</p>
+            }
+
+            @if (selectedPercentileBuildings(); as buildings) {
+              @if (buildings.components.length === 1) {
+                <!-- Single component: the percentile the user clicked directly IS this component's own
+                     EUI rank, so showing every close candidate (not just the one selected) is meaningful
+                     context, not confusing noise. -->
+                @for (component of buildings.components; track component.building_type + component.product) {
+                  <div class="candidate-table-wrap">
+                    <h4>
+                      {{ component.label || component.building_type }} ({{ component.product }})
+                      <span class="candidate-count">
+                        {{ component.candidates.length }} building{{ component.candidates.length > 1 ? 's' : '' }}
+                        near this percentile
+                      </span>
+                    </h4>
+                    <table class="candidate-table">
+                      <thead>
+                        <tr>
+                          <th>Use</th>
+                          <th>bldg_id</th>
+                          <th>Site EUI (kBtu/ft2)</th>
+                          <th>Sample sqft</th>
+                          @if (component.candidates[0]?.unit_multiplier) {
+                            <th># units (implied)</th>
+                            <th>Scaled to target sqft</th>
+                          }
+                          <th>Percentile rank</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        @for (candidate of component.candidates; track candidate.bldg_id) {
+                          <tr [class.selected-row]="candidate.bldg_id === component.selected_bldg_id">
+                            <td>
+                              @if (candidate.bldg_id === component.selected_bldg_id) {
+                                &#9989;
+                              } @else {
+                                &mdash;
+                              }
+                            </td>
+                            <td>{{ candidate.bldg_id }}</td>
+                            <td>{{ candidate.eui_kbtu_per_ft2 | number: '1.0-1' }}</td>
+                            <td>{{ candidate.sqft | number }}</td>
+                            @if (candidate.unit_multiplier) {
+                              <td>{{ candidate.unit_multiplier | number: '1.0-1' }}</td>
+                              <td>{{ candidate.scaled_sqft | number: '1.0-0' }}</td>
+                            }
+                            <td>{{ candidate.percentile_rank | number: '1.0-1' }}</td>
+                          </tr>
+                        }
+                      </tbody>
+                    </table>
+                    @if (component.candidates[0]?.unit_multiplier) {
+                      <p class="scale-note">
+                        Each candidate's "Sample sqft" is a single {{ isPerDwellingUnit(component) ? 'dwelling unit' : 'building' }}'s
+                        floor area from the underlying data -- to reach your requested target square footage, it's scaled up by the
+                        implied number of units shown above.
+                      </p>
+                    }
+                  </div>
+                }
+              } @else {
+                <!-- Multiple components: the picked percentile describes the *composite's combined* EUI,
+                     not any single component's own rank -- each component's own EUI at this point differs
+                     (that's expected, since they're weighted together), so showing per-component "nearby
+                     candidates" here would look like unrelated/conflicting values rather than useful
+                     detail. Just show which single building was actually selected for each component. -->
+                <table class="candidate-table">
+                  <thead>
+                    <tr>
+                      <th>Component</th>
+                      <th>bldg_id</th>
+                      <th>Site EUI (kBtu/ft2)</th>
+                      <th>Sample sqft</th>
+                      <th># units (implied)</th>
+                      <th>Scaled to target sqft</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    @for (component of buildings.components; track component.building_type + component.product) {
+                      @if (component.candidates[0]; as selected) {
+                        <tr>
+                          <td>{{ component.label || component.building_type }} ({{ component.product }})</td>
+                          <td>{{ component.selected_bldg_id }}</td>
+                          <td>{{ selected.eui_kbtu_per_ft2 | number: '1.0-1' }}</td>
+                          <td>{{ selected.sqft | number }}</td>
+                          <td>{{ selected.unit_multiplier ? (selected.unit_multiplier | number: '1.0-1') : '&mdash;' }}</td>
+                          <td>{{ selected.scaled_sqft ? (selected.scaled_sqft | number: '1.0-0') : '&mdash;' }}</td>
+                        </tr>
+                      }
+                    }
+                  </tbody>
+                </table>
+                <p class="scale-note">
+                  "Sample sqft" is each selected building/dwelling's own floor area from the underlying data -- scaled up (implied #
+                  units) to reach the target square footage entered for that component.
+                </p>
+              }
+            }
+          } @else {
+            <p class="selected-note">No percentile picked yet -- each downstream page will fall back to its own default building selection.</p>
+          }
+        }
+
+        <button class="primary" (click)="continueToDashboard()">Continue to dashboard &rarr;</button>
+      </section>
+    }
   }
 </div>

@@ -21,6 +21,19 @@
       </div>
     }
 
+    <section class="selected-buildings">
+      <h3>Representative building{{ selectedBuildings.length > 1 ? 's' : '' }}</h3>
+      <p class="chart-note">
+        This time series is downloaded for one real building/dwelling-unit per component (not every sampled
+        one) -- these are the actual bldg_id(s) used:
+      </p>
+      <ul>
+        @for (b of selectedBuildings; track b.key) {
+          <li>{{ b.label }}: <strong>{{ b.bldgId ?? 'unknown' }}</strong></li>
+        }
+      </ul>
+    </section>
+
     <div class="controls">
       <label>
         Column
@@ -32,6 +45,9 @@
       </label>
       <button class="primary" (click)="exportMos()" [disabled]="exporting()">
         {{ exporting() ? 'Exporting...' : 'Export thermal loads (.mos)' }}
+      </button>
+      <button class="primary" (click)="downloadBuildingModels()" [disabled]="downloadingModels()">
+        {{ downloadingModels() ? 'Downloading...' : 'Download building energy model(s)' }}
       </button>
     </div>
 
@@ -47,9 +63,13 @@
       @if (isComparingToBaseline) {
         <p class="chart-note">Comparing baseline (upgrade 0) against the composite's configured upgrade.</p>
       }
+      <p class="chart-note">
+        Use Plotly's toolbar, drag-zoom, pan, or scroll/pinch zoom controls.
+        <button type="button" class="reset-zoom-btn" (click)="ldcChart?.resetZoom()">Reset zoom</button>
+      </p>
       <div class="chart-canvas-wrap">
         @if (loadDurationChartData) {
-          <app-chart type="line" [data]="loadDurationChartData" [options]="lineOptions"></app-chart>
+          <app-plot #ldcChart [data]="loadDurationChartData" [layout]="lineLayout" [config]="plotConfig"></app-plot>
         }
       </div>
     </section>
@@ -58,7 +78,7 @@
       <h3>Annual energy by end use</h3>
       <div class="chart-canvas-wrap">
         @if (endUseChartData) {
-          <app-chart type="bar" [data]="endUseChartData" [options]="stackedBarOptions"></app-chart>
+          <app-plot [data]="endUseChartData" [layout]="stackedBarLayout"></app-plot>
         }
       </div>
     </section>

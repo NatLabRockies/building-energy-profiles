@@ -13,16 +13,23 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, Response
 
 from api import services
 from api.config import Settings
 from api.schemas import (
     AvailableCountiesResponse,
     AvailableStatesResponse,
+    BuildingEnergyModelRequest,
+    BuildingEnergyModelResponse,
+    BuildingTypesResponse,
     CompositeResolveRequest,
     CompositeResolveResponse,
     EnergyStarTypeInfo,
+    EuiDistributionRequest,
+    EuiDistributionResponse,
+    EuiPercentileBuildingsRequest,
+    EuiPercentileBuildingsResponse,
     MeasuresCompareRequest,
     MeasuresCompareResponse,
     MeasuresListResponse,
@@ -71,6 +78,13 @@ def get_energy_star_types() -> list[EnergyStarTypeInfo]:
     return services.list_energy_star_types()
 
 
+@app.get("/api/building-types", response_model=BuildingTypesResponse)
+def get_building_types(product: str = Query(..., pattern="^(comstock|resstock)$")) -> BuildingTypesResponse:
+    """List every real ComStock/ResStock building type for `product`, for entering a composite component
+    directly instead of via the ENERGY STAR crosswalk."""
+    return services.list_building_types(product)
+
+
 @app.post("/api/composite/resolve", response_model=CompositeResolveResponse)
 def post_composite_resolve(request: CompositeResolveRequest) -> CompositeResolveResponse:
     """Resolve one or more ENERGY STAR property types (+ floor-area fractions/sqft) to BuildStock building
@@ -88,6 +102,22 @@ def post_metadata_summary(request: MetadataSummaryRequest) -> MetadataSummaryRes
     """Download annual metadata for each composite component and return a fraction-weighted energy/EUI/
     end-use summary suitable for dashboard cards and charts."""
     return services.get_metadata_summary(request, settings)
+
+
+@app.post("/api/composite/eui-distribution", response_model=EuiDistributionResponse)
+def post_eui_distribution(request: EuiDistributionRequest) -> EuiDistributionResponse:
+    """Build the composite's fraction-weighted site EUI (kBtu/ft2) percentile curve, plus which real
+    representative building each component resolves to at the 5th/25th/50th/75th/95th percentile + average
+    -- lets the builder page replace an arbitrary/random representative-building pick with an explicit,
+    user-chosen point along the actual distribution of sampled buildings."""
+    return services.get_eui_distribution(request, settings)
+
+
+@app.post("/api/composite/eui-percentile-buildings", response_model=EuiPercentileBuildingsResponse)
+def post_eui_percentile_buildings(request: EuiPercentileBuildingsRequest) -> EuiPercentileBuildingsResponse:
+    """List the real sampled buildings near a user-clicked percentile on the EUI curve, per component --
+    for the table shown under the chart once a user clicks a point on the line."""
+    return services.get_eui_percentile_buildings(request, settings)
 
 
 @app.post("/api/timeseries/composite", response_model=TimeseriesResponse)
@@ -119,7 +149,7 @@ def get_available_states(
 @app.get("/api/locations/counties", response_model=AvailableCountiesResponse)
 def get_available_counties(
     product: str = Query(..., pattern="^(comstock|resstock)$"),
-    state: str = Query(..., min_length=2, max_length=2),
+    state: str = Query(..., min_length=2, max_length=3, pattern="^([A-Za-z]{2}|All)$"),
     release: str | None = None,
 ) -> AvailableCountiesResponse:
     """List every distinct county name actually published for a state, for a county dropdown dependent on
@@ -141,5 +171,26 @@ def post_export_mos(request: MosExportRequest) -> PlainTextResponse:
     return PlainTextResponse(
         content=mos_text,
         media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/api/composite/building-models/manifest", response_model=BuildingEnergyModelResponse)
+def post_building_energy_model_manifest(request: BuildingEnergyModelRequest) -> BuildingEnergyModelResponse:
+    """List which real building energy model file each composite component will download (bldg_id +
+    filename), without downloading the (potentially large) model file(s) yet."""
+    return services.get_building_energy_model_manifest(request, settings)
+
+
+@app.post("/api/composite/building-models")
+def post_building_energy_models(request: BuildingEnergyModelRequest) -> Response:
+    """Download the composite's representative building energy model(s) -- one real OpenStudio model per
+    component (ComStock: gzipped ".osm.gz"; ResStock: a ".zip" of the model + its schedule files). A
+    single-component composite returns that one file as-is; a multi-component composite returns a ".zip"
+    bundling every component's model together, since an HTTP response can only carry one file."""
+    content, filename, media_type = services.build_building_energy_models(request, settings)
+    return Response(
+        content=content,
+        media_type=media_type,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

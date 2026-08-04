@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import math
 from collections.abc import Mapping
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -55,6 +56,11 @@ from .comstock import ComStockProcessor
 from .resstock import ResStockProcessor
 
 _WEIGHT_SUM_TOLERANCE = 1e-6
+
+# Composite components are fully independent to download (different processors/files), so
+# pull_composite_time_series() downloads them concurrently rather than one at a time -- bounded modestly
+# since a composite is typically a handful of components, not dozens.
+_COMPONENT_DOWNLOAD_WORKERS = 8
 
 
 @dataclass(frozen=True)
@@ -288,6 +294,7 @@ def pull_composite_time_series(
     min_sqft: float | None = None,
     max_sqft: float | None = None,
     value_columns: list[str] | None = None,
+    timeseries_dir: Path | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
     upgrade_by_component: Mapping[tuple[str, str], str] | None = None,
     building_condition: Mapping[tuple[str, str], float] | None = None,
@@ -302,11 +309,16 @@ def pull_composite_time_series(
     else `building_condition[component.key]`'s percentile-band median building if given; else the first
     building `process_metadata()` finds in scope), downloads its time series via
     `process_building_time_series()`, and normalizes/combines every component with
-    `combine_composite_time_series()`.
+    `combine_composite_time_series()`. Components are fully independent of each other (different
+    processors/files), so a composite with 2+ components downloads them concurrently (one thread per
+    component, up to `_COMPONENT_DOWNLOAD_WORKERS`) instead of one at a time.
 
     Args:
         composite: the `CompositeBuildingType` to pull and combine time series for.
-        save_dir: base directory for downloaded metadata/time series (one subfolder per product).
+        save_dir: base directory for downloaded metadata (one subfolder per product).
+        timeseries_dir: optional separate base directory for downloaded time series (one subfolder per
+            product). When omitted, time series remain under each product's metadata directory for
+            backwards compatibility.
         state: 2-letter state abbreviation shared by every component.
         county_name: county filter shared by every component (see `ComStockProcessor`/`ResStockProcessor`
             for format differences between products).
@@ -347,9 +359,11 @@ def pull_composite_time_series(
         A tuple of `(combined_composite_time_series, {component.key: component_time_series})` so callers can
         inspect both the blended result and each underlying component's own profile.
     """
-    component_time_series: dict[tuple[str, str], pd.DataFrame] = {}
-    component_scale: dict[tuple[str, str], float] = {}
-    for component in composite.components:
+
+    def _pull_one(component: CompositeComponent) -> tuple[tuple[str, str], pd.DataFrame, float | None]:
+        """Download one component's representative building time series -- the unit of work run
+        concurrently (one thread per component) below, since each component uses its own processor/files
+        and is otherwise fully independent of every other component."""
         processor_cls: type[BuildStockProcessor] = (
             ComStockProcessor if component.product.strip().lower() == "comstock" else ResStockProcessor
         )
@@ -397,19 +411,34 @@ def pull_composite_time_series(
             if sqft_column:
                 sample_sqft = float(sample[sqft_column].iloc[0])
 
+        scale: float | None = None
         if target_sqft is not None:
             if component.key not in target_sqft:
                 raise ValueError(f"Missing target_sqft for composite component {component.key}")
             if not sample_sqft:
                 raise ValueError(f"Could not determine floor area for composite component {component.key} to scale by target_sqft.")
-            component_scale[component.key] = target_sqft[component.key] / sample_sqft
+            scale = target_sqft[component.key] / sample_sqft
 
-        ts_dir = processor.base_dir / "timeseries" / f"upgrade_{component_upgrade}"
+        ts_root = timeseries_dir or processor.base_dir
+        ts_dir = ts_root / component.product.strip().lower() / f"upgrade_{component_upgrade}"
         ts_dir.mkdir(parents=True, exist_ok=True)
         paths, _building_ids = processor.process_building_time_series(sample[["bldg_id", "in.state"]], save_dir=ts_dir)
         if not paths:
             raise ValueError(f"Failed to download time series for composite component {component.key}.")
-        component_time_series[component.key] = pd.read_parquet(paths[0])
+        return component.key, pd.read_parquet(paths[0]), scale
+
+    component_time_series: dict[tuple[str, str], pd.DataFrame] = {}
+    component_scale: dict[tuple[str, str], float] = {}
+    if len(composite.components) > 1:
+        with ThreadPoolExecutor(max_workers=min(len(composite.components), _COMPONENT_DOWNLOAD_WORKERS)) as executor:
+            results = list(executor.map(_pull_one, composite.components))
+    else:
+        results = [_pull_one(component) for component in composite.components]
+
+    for key, time_series, scale in results:
+        component_time_series[key] = time_series
+        if scale is not None:
+            component_scale[key] = scale
 
     weights = component_scale if target_sqft is not None else None
     combined = combine_composite_time_series(composite, component_time_series, value_columns=value_columns, weights=weights)

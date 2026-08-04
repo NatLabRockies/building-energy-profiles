@@ -28,7 +28,30 @@
           <span matListItemTitle>{{ item.label }}</span>
         </a>
       }
+
+      @if (scenarios().length > 0) {
+        <div class="sidenav-section-header">
+          <span>Recent scenarios</span>
+        </div>
+        @for (scenario of scenarios(); track scenario.id) {
+          <a mat-list-item [routerLink]="['/measures']" [queryParams]="{ scenario: scenario.id }" class="scenario-item">
+            <mat-icon matListItemIcon>history</mat-icon>
+            <span matListItemTitle [title]="scenario.label">{{ scenario.label }}</span>
+            <span matListItemLine [title]="scenario.measuresSummary">{{ scenario.measuresSummary }}</span>
+            <button
+              mat-icon-button
+              matListItemMeta
+              class="scenario-remove"
+              aria-label="Remove scenario"
+              (click)="removeScenario($event, scenario.id)"
+            >
+              <mat-icon>close</mat-icon>
+            </button>
+          </a>
+        }
+      }
     </mat-nav-list>
+
 
     <div class="sidenav-footer">
       <a

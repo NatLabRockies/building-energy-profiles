@@ -5,6 +5,7 @@ These are pure functions with no network calls, used by both ComStockProcessor a
 build cache filenames and validate release identifiers.
 """
 
+import pandas as pd
 import pytest
 
 from buildstock_processor import BuildStockProcessor, ComStockProcessor, ResStockProcessor
@@ -96,13 +97,33 @@ class TestBuildStockProcessor:
 
     @pytest.mark.unit
     def test_empty_cached_metadata_is_an_empty_dataframe(self, tmp_path):
-        empty_csv = tmp_path / "empty.csv"
-        empty_csv.touch()
+        empty_parquet = tmp_path / "empty.parquet"
+        pd.DataFrame({"bldg_id": pd.Series(dtype="int64")}).to_parquet(empty_parquet, index=False)
 
-        result = BuildStockProcessor._read_cached_metadata(empty_csv)
+        result = BuildStockProcessor._read_cached_metadata(empty_parquet)
 
         assert result.empty
-        assert list(result.columns) == []
+        assert list(result.columns) == ["bldg_id"]
+
+    @pytest.mark.unit
+    def test_parquet_is_the_primary_filtered_metadata_cache(self, tmp_path):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+        parquet_path = processor._selected_metadata_path(tmp_path, "0")
+
+        assert parquet_path.suffix == ".parquet"
+
+        metadata = pd.DataFrame({"bldg_id": [1], "in.state": ["DE"]})
+        processor._write_metadata_cache(metadata, tmp_path, "0")
+        pd.testing.assert_frame_equal(processor._read_cached_metadata(parquet_path), metadata)
+
+    @pytest.mark.unit
+    def test_legacy_csv_cache_is_not_used(self, tmp_path):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+        metadata = pd.DataFrame({"bldg_id": [1], "in.state": ["DE"]})
+        csv_path = tmp_path / "legacy-selected_metadata.csv"
+        metadata.to_csv(csv_path, index=False)
+
+        assert processor._read_cached_metadata_if_exists(tmp_path, "0") is None
 
     @pytest.mark.unit
     def test_supported_release_paths_use_year_and_release_consistently(self):

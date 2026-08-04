@@ -257,7 +257,7 @@ paths, building_ids = processor.process_building_time_series(matching_buildings,
 > **Note:** Since metadata is only partitioned by state and county (not building type or square footage),
 > `min_sqft`/`max_sqft` and requesting specific counties don't reduce how many partition files are downloaded --
 > they're applied locally, after downloading, the same way `building_type` already is. Cache filenames (the
-> `..._selected_metadata.csv` files) encode all of these filters, so different searches against the same
+> `..._selected_metadata.parquet` files) encode all of these filters, so different searches against the same
 > state/upgrade don't collide with each other's cached results.
 
 ### Comparing Buildings Across Measure Packages

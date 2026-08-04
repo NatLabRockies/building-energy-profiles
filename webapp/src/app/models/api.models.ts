@@ -12,7 +12,13 @@ export interface EnergyStarTypeInfo {
 }
 
 export interface EnergyStarComponentIn {
-  energy_star_property_type: string;
+  /** Exactly one of `energy_star_property_type` or (`product` + `building_type`) must be set -- see
+   * CompositeResolveRequest. */
+  energy_star_property_type?: string | null;
+  /** A ComStock/ResStock building type entered directly, skipping the ENERGY STAR crosswalk -- both
+   * `product` and `building_type` must be set together. */
+  product?: Product | null;
+  building_type?: string | null;
   /** Exactly one of `fraction`/`sqft` must be set -- see CompositeResolveRequest. */
   fraction?: number | null;
   sqft?: number | null;
@@ -121,6 +127,10 @@ export interface TimeseriesResponse {
   row_count: number;
   series: Record<string, number | string | null>[];
   component_labels: Record<string, string>;
+  /** {"product:building_type" -> bldg_id} identifying the exact real building/dwelling-unit whose time
+   * series was downloaded and used for each component -- this endpoint only pulls a single representative
+   * building per component, so this surfaces exactly which one was picked. */
+  component_bldg_ids: Record<string, number>;
   warnings: string[];
 }
 
@@ -141,6 +151,12 @@ export interface AvailableStatesResponse {
   ok: boolean;
   product: Product;
   states: string[];
+}
+
+export interface BuildingTypesResponse {
+  ok: boolean;
+  product: Product;
+  building_types: string[];
 }
 
 export interface AvailableCountiesResponse {
@@ -193,6 +209,101 @@ export interface ApiErrorResponse {
   error_type: string;
   error: string;
 }
+
+export interface EuiDistributionRequest extends CompositeRequestBase {
+  curve_points?: number;
+}
+
+export interface EuiPercentileSelection {
+  label: string;
+  percentile: number | null;
+  eui_kbtu_per_ft2: number;
+  /** {"product:building_type" -> bldg_id} for the real building selected for each component at this
+   * percentile target. */
+  bldg_ids: Record<string, number>;
+}
+
+export interface EuiCurvePoint {
+  eui_kbtu_per_ft2: number;
+  /** Peak-normalized probability density (0-1) at this site EUI -- the curve's shape, not a percentile
+   * rank. */
+  density: number;
+  /** This point's percentile rank (0-100) along the composite's distribution -- used to map an x-position
+   * click back to a percentile. */
+  percentile: number;
+}
+
+export interface EuiDistributionResponse {
+  ok: boolean;
+  state: string;
+  curve: EuiCurvePoint[];
+  mean_eui_kbtu_per_ft2: number;
+  median_eui_kbtu_per_ft2: number;
+  sample_size: number;
+  percentiles: EuiPercentileSelection[];
+  warnings: string[];
+}
+
+export interface EuiPercentileBuildingsRequest extends CompositeRequestBase {
+  percentile: number;
+  band?: number;
+  max_candidates_per_component?: number;
+}
+
+export interface EuiCandidateBuilding {
+  bldg_id: number;
+  eui_kbtu_per_ft2: number;
+  /** The sampled building/dwelling's own floor area, as-is in the underlying metadata (for a ResStock
+   * component, this is ONE dwelling's sqft, not the component's requested total). */
+  sqft: number;
+  /** `sqft` scaled to the component's requested target square footage (null in fraction mode). */
+  scaled_sqft?: number | null;
+  /** How many of this sampled dwelling/building it takes to reach the component's target sqft (null in
+   * fraction mode). E.g. ~68 for a multifamily component requesting 75,000 sqft against a ~1,100 sqft
+   * sample unit. */
+  unit_multiplier?: number | null;
+  percentile_rank: number;
+}
+
+export interface EuiPercentileBuildingsComponent {
+  product: Product;
+  building_type: string;
+  label?: string | null;
+  selected_bldg_id: number;
+  candidates: EuiCandidateBuilding[];
+}
+
+export interface EuiPercentileBuildingsResponse {
+  ok: boolean;
+  percentile: number;
+  components: EuiPercentileBuildingsComponent[];
+  warnings: string[];
+}
+
+export interface BuildingEnergyModelRequest extends CompositeRequestBase {
+  /** Optional {"product:building_type" -> bldg_id} overrides for specific representative buildings --
+   * mirrors TimeseriesRequest.bldg_ids. */
+  bldg_ids?: Record<string, number> | null;
+}
+
+export interface ComponentBuildingModel {
+  product: Product;
+  building_type: string;
+  label?: string | null;
+  bldg_id: number;
+  /** The building energy model's own filename, e.g. "comstock-bldg0000123-up00.osm.gz" -- included in a
+   * multi-component ".zip" bundle under this name. */
+  filename: string;
+}
+
+export interface BuildingEnergyModelResponse {
+  ok: boolean;
+  state: string;
+  upgrade: string;
+  components: ComponentBuildingModel[];
+  warnings: string[];
+}
+
 
 /** Common annual "total" energy columns shared by ComStock and ResStock, mirroring
  * api/services.py's DEFAULT_METRIC_COLUMNS. Used as chart series defaults in the UI. */

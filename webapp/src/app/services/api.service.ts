@@ -6,9 +6,16 @@ import { environment } from '../../environments/environment';
 import {
   AvailableCountiesResponse,
   AvailableStatesResponse,
+  BuildingEnergyModelRequest,
+  BuildingEnergyModelResponse,
+  BuildingTypesResponse,
   CompositeResolveRequest,
   CompositeResolveResponse,
   EnergyStarTypeInfo,
+  EuiDistributionRequest,
+  EuiDistributionResponse,
+  EuiPercentileBuildingsRequest,
+  EuiPercentileBuildingsResponse,
   MeasuresCompareRequest,
   MeasuresCompareResponse,
   MeasuresListResponse,
@@ -31,12 +38,25 @@ export class ApiService {
     return this.http.get<EnergyStarTypeInfo[]>(`${this.baseUrl}/energy-star-types`);
   }
 
+  getBuildingTypes(product: Product): Observable<BuildingTypesResponse> {
+    const params = new HttpParams().set('product', product);
+    return this.http.get<BuildingTypesResponse>(`${this.baseUrl}/building-types`, { params });
+  }
+
   resolveComposite(request: CompositeResolveRequest): Observable<CompositeResolveResponse> {
     return this.http.post<CompositeResolveResponse>(`${this.baseUrl}/composite/resolve`, request);
   }
 
   getMetadataSummary(request: MetadataSummaryRequest): Observable<MetadataSummaryResponse> {
     return this.http.post<MetadataSummaryResponse>(`${this.baseUrl}/metadata/summary`, request);
+  }
+
+  getEuiDistribution(request: EuiDistributionRequest): Observable<EuiDistributionResponse> {
+    return this.http.post<EuiDistributionResponse>(`${this.baseUrl}/composite/eui-distribution`, request);
+  }
+
+  getEuiPercentileBuildings(request: EuiPercentileBuildingsRequest): Observable<EuiPercentileBuildingsResponse> {
+    return this.http.post<EuiPercentileBuildingsResponse>(`${this.baseUrl}/composite/eui-percentile-buildings`, request);
   }
 
   getCompositeTimeseries(request: TimeseriesRequest): Observable<TimeseriesResponse> {
@@ -73,5 +93,13 @@ export class ApiService {
 
   exportMos(request: MosExportRequest): Observable<Blob> {
     return this.http.post(`${this.baseUrl}/export/mos`, request, { responseType: 'blob' });
+  }
+
+  getBuildingEnergyModelManifest(request: BuildingEnergyModelRequest): Observable<BuildingEnergyModelResponse> {
+    return this.http.post<BuildingEnergyModelResponse>(`${this.baseUrl}/composite/building-models/manifest`, request);
+  }
+
+  downloadBuildingEnergyModels(request: BuildingEnergyModelRequest): Observable<Blob> {
+    return this.http.post(`${this.baseUrl}/composite/building-models`, request, { responseType: 'blob' });
   }
 }

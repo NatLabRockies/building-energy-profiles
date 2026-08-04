@@ -110,7 +110,7 @@ class TestComStockProcessor:
         expected_csv = (
             sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
             f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
-            f"{sample_processor.upgrade}-selected_metadata.csv"
+            f"{sample_processor.upgrade}-selected_metadata.parquet"
         )
         assert expected_csv.exists()
 
@@ -159,7 +159,7 @@ class TestComStockProcessor:
         csv_file = (
             sample_processor.base_dir / f"{sample_processor.release}-{sample_processor.state}-{scope_label(sample_processor.county_name)}-"
             f"{sample_processor.building_type}-{sqft_label(sample_processor.min_sqft, sample_processor.max_sqft)}-"
-            f"{sample_processor.upgrade}-selected_metadata.csv"
+            f"{sample_processor.upgrade}-selected_metadata.parquet"
         )
 
         assert partition_files
@@ -414,7 +414,7 @@ class TestComStockProcessor:
 
         mocker.patch.object(ComStockProcessor, "list_upgrades", return_value={"0": "Baseline", "1": "Some Package"})
 
-        def fake_download_for_upgrade(save_dir, upgrade):
+        def fake_download_for_upgrade(save_dir, upgrade, progress_position=None):
             return pd.DataFrame({"bldg_id": [1], "upgrade": [int(upgrade)], "in.upgrade_name": [f"pkg-{upgrade}"]})
 
         mock_download = mocker.patch.object(ComStockProcessor, "_download_metadata_for_upgrade", side_effect=fake_download_for_upgrade)
@@ -502,8 +502,73 @@ class TestComStockProcessor:
         def cache_filename(processor: ComStockProcessor) -> str:
             return (
                 f"{processor.release}-{processor.state}-{scope_label(processor.county_name)}-{processor.building_type}-"
-                f"{sqft_label(processor.min_sqft, processor.max_sqft)}-{processor.upgrade}-selected_metadata.csv"
+                f"{sqft_label(processor.min_sqft, processor.max_sqft)}-{processor.upgrade}-selected_metadata.parquet"
             )
 
         filenames = {cache_filename(base_processor), cache_filename(multi_county_processor), cache_filename(sqft_processor)}
         assert len(filenames) == 3
+
+
+class TestBuildingEnergyModelDownload:
+    """Unit tests for ComStockProcessor.building_energy_model_url()/download_building_energy_model(s)() --
+    mocks `download_file` so these don't hit the network."""
+
+    @pytest.mark.unit
+    def test_building_energy_model_url_zero_pads_upgrade_folder_and_filename(self, tmp_path):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="5", base_dir=tmp_path)
+
+        url = processor.building_energy_model_url(1)
+
+        assert url.endswith("building_energy_models/upgrade=05/bldg0000001-up05.osm.gz")
+
+    @pytest.mark.unit
+    def test_building_energy_model_url_accepts_explicit_upgrade_override(self, tmp_path):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+
+        url = processor.building_energy_model_url(42, upgrade="12")
+
+        assert url.endswith("building_energy_models/upgrade=12/bldg0000042-up12.osm.gz")
+
+    @pytest.mark.unit
+    def test_download_building_energy_model_writes_expected_filename(self, tmp_path, mocker):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+        mock_download = mocker.patch.object(
+            ComStockProcessor, "download_file", side_effect=lambda _url, save_path: save_path.write_bytes(b"fake")
+        )
+
+        save_dir = tmp_path / "models"
+        path = processor.download_building_energy_model(7, save_dir)
+
+        assert path == save_dir / "comstock-bldg0000007-up00.osm.gz"
+        assert path.exists()
+        mock_download.assert_called_once()
+
+    @pytest.mark.unit
+    def test_download_building_energy_model_skips_if_already_cached(self, tmp_path, mocker):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+        mock_download = mocker.patch.object(ComStockProcessor, "download_file")
+
+        save_dir = tmp_path / "models"
+        save_dir.mkdir(parents=True)
+        existing = save_dir / "comstock-bldg0000007-up00.osm.gz"
+        existing.write_bytes(b"already here")
+
+        path = processor.download_building_energy_model(7, save_dir)
+
+        assert path == existing
+        mock_download.assert_not_called()
+
+    @pytest.mark.unit
+    def test_download_building_energy_models_downloads_each_bldg_id(self, tmp_path, mocker):
+        processor = ComStockProcessor(state="DE", county_name="All", building_type="All", upgrade="0", base_dir=tmp_path)
+        mocker.patch.object(ComStockProcessor, "download_file", side_effect=lambda _url, save_path: save_path.write_bytes(b"fake"))
+
+        save_dir = tmp_path / "models"
+        paths = processor.download_building_energy_models([1, 2, 3], save_dir)
+
+        assert [p.name for p in paths] == [
+            "comstock-bldg0000001-up00.osm.gz",
+            "comstock-bldg0000002-up00.osm.gz",
+            "comstock-bldg0000003-up00.osm.gz",
+        ]
+        assert all(p.exists() for p in paths)

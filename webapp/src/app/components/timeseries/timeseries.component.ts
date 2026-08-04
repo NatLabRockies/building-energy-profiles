@@ -1,19 +1,16 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, ViewChild, signal } from '@angular/core';
 
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
-import { ChartConfiguration } from 'chart.js';
-// Side-effect import only -- brings in chartjs-plugin-zoom's TypeScript module augmentation so
-// `plugins.zoom` below type-checks. The plugin itself is registered app-wide in chartjs-setup.ts.
-import 'chartjs-plugin-zoom';
+import type { Config, Data, Layout } from 'plotly.js-dist-min';
 import { forkJoin, of } from 'rxjs';
 
 import { ApiService } from '../../services/api.service';
 import { CompositeStateService } from '../../services/composite-state.service';
 import { DEFAULT_METRIC_COLUMNS, EndUseValue, TimeseriesResponse } from '../../models/api.models';
 import { CHART_COLORS } from '../../models/chart-colors';
-import { ChartComponent } from '../chart/chart.component';
 import { HeatmapComponent, HeatmapPoint } from '../heatmap/heatmap.component';
+import { PlotComponent } from '../plot/plot.component';
 
 const COLUMN_LABELS: Record<string, string> = {
   'out.electricity.total.energy_consumption': 'Electricity (total)',
@@ -28,13 +25,14 @@ const COLUMN_LABELS: Record<string, string> = {
 @Component({
   selector: 'app-timeseries',
   standalone: true,
-  imports: [FormsModule, ChartComponent, HeatmapComponent],
+  imports: [FormsModule, PlotComponent, HeatmapComponent],
   templateUrl: './timeseries.component.html',
   styleUrl: './timeseries.component.scss',
 })
 export class TimeseriesComponent implements OnInit {
   loading = signal(false);
   exporting = signal(false);
+  downloadingModels = signal(false);
   errorMessage = signal<string | null>(null);
   timeseries = signal<TimeseriesResponse | null>(null);
   /** Only populated when the composite's configured upgrade isn't already baseline ("0") -- lets the LDC
@@ -43,40 +41,46 @@ export class TimeseriesComponent implements OnInit {
   selectedColumn = signal<string>(DEFAULT_METRIC_COLUMNS[6]);
 
   heatmapPoints: HeatmapPoint[] = [];
-  loadDurationChartData?: ChartConfiguration<'line'>['data'];
-  endUseChartData?: ChartConfiguration<'bar'>['data'];
-  readonly lineOptions: ChartConfiguration<'line'>['options'] = {
-    responsive: true,
-    maintainAspectRatio: false,
-    elements: { point: { radius: 0 } },
-    plugins: {
-      legend: { display: true },
-      // Scroll-wheel/pinch to zoom, click-drag to pan -- useful for a full 8760-hour load duration
-      // curve where the interesting detail (top/bottom of the curve) can be a small fraction of it.
-      zoom: {
-        zoom: { wheel: { enabled: true }, pinch: { enabled: true }, mode: 'x' },
-        pan: { enabled: true, mode: 'x' },
-        limits: { x: { min: 'original', max: 'original' } },
-      },
-    },
-    scales: {
-      x: { title: { display: true, text: 'Hours, sorted descending' } },
-      // Hourly-resampled energy (kWh per hour) is numerically equal to average power (kW) over that
-      // hour, and a load *duration* curve is conventionally a power curve, not an energy curve.
-      y: { title: { display: true, text: 'kW' } },
-    },
+  loadDurationChartData?: Data[];
+  /** Reference to the load duration curve's <app-plot>, so its "Reset zoom" button can restore autorange. */
+  @ViewChild('ldcChart') ldcChart?: PlotComponent;
+  endUseChartData?: Data[];
+  readonly plotConfig: Partial<Config> = { responsive: true, displaylogo: false };
+  readonly lineLayout: Partial<Layout> = {
+    autosize: true,
+    margin: { l: 60, r: 20, t: 20, b: 50 },
+    xaxis: { title: { text: 'Hours, sorted descending' } },
+    yaxis: { title: { text: 'kW' } },
+    legend: { orientation: 'h' },
   };
-  readonly stackedBarOptions: ChartConfiguration<'bar'>['options'] = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      x: { stacked: true },
-      y: { stacked: true, title: { display: true, text: 'Annual energy (kWh)' } },
+  readonly stackedBarLayout: Partial<Layout> = {
+    autosize: true,
+    barmode: 'stack',
+    margin: { l: 60, r: 20, t: 20, b: 50 },
+    xaxis: {},
+    yaxis: {
+      title: { text: 'Annual energy (kWh)' },
     },
   };
 
   get isComparingToBaseline(): boolean {
     return this.compositeState.upgrade() !== '0';
+  }
+
+  /** The exact real building/dwelling-unit downloaded and used for each composite component -- since this
+   * page only pulls a single representative building per component (not every sampled one), this makes an
+   * otherwise-invisible selection (the API's own pick, absent an explicit override) visible to the user.
+   */
+  get selectedBuildings(): { key: string; label: string; bldgId: number | null }[] {
+    const data = this.timeseries();
+    if (!data) {
+      return [];
+    }
+    return Object.keys(data.component_labels).map((key) => ({
+      key,
+      label: data.component_labels[key],
+      bldgId: data.component_bldg_ids[key] ?? null,
+    }));
   }
 
   constructor(
@@ -163,32 +167,33 @@ export class TimeseriesComponent implements OnInit {
 
     const currentSorted = this.sortedDescending(data, column);
     const baseline = this.baselineTimeseries();
-    const datasets: ChartConfiguration<'line'>['data']['datasets'] = [
+    const datasets: Data[] = [
       {
-        label: baseline ? `Current (upgrade ${this.compositeState.upgrade()})` : this.columnLabel(column),
-        data: currentSorted,
-        borderColor: '#2563eb',
-        backgroundColor: 'rgba(37, 99, 235, 0.15)',
-        fill: true,
-        tension: 0,
+        type: 'scatter',
+        mode: 'lines',
+        name: baseline ? `Current (upgrade ${this.compositeState.upgrade()})` : this.columnLabel(column),
+        x: currentSorted.map((_, i) => i),
+        y: currentSorted,
+        line: { color: '#2563eb' },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(37, 99, 235, 0.15)',
       },
     ];
     if (baseline) {
       const baselineSorted = this.sortedDescending(baseline, column);
       datasets.push({
-        label: 'Baseline (upgrade 0)',
-        data: baselineSorted,
-        borderColor: '#94a3b8',
-        backgroundColor: 'rgba(148, 163, 184, 0.15)',
-        fill: true,
-        tension: 0,
+        type: 'scatter',
+        mode: 'lines',
+        name: 'Baseline (upgrade 0)',
+        x: baselineSorted.map((_, i) => i),
+        y: baselineSorted,
+        line: { color: '#94a3b8' },
+        fill: 'tozeroy',
+        fillcolor: 'rgba(148, 163, 184, 0.15)',
       });
     }
 
-    this.loadDurationChartData = {
-      labels: currentSorted.map((_, i) => i),
-      datasets,
-    };
+    this.loadDurationChartData = datasets;
   }
 
   private renderEndUseChart(currentByEndUse: EndUseValue[], baselineByEndUse: EndUseValue[] | null): void {
@@ -196,14 +201,13 @@ export class TimeseriesComponent implements OnInit {
     const labels = baselineByEndUse ? ['Baseline (upgrade 0)', `Current (upgrade ${this.compositeState.upgrade()})`] : ['Current'];
     const valueFor = (list: EndUseValue[], key: string) => list.find((v) => v.key === key)?.annual_energy_kwh ?? 0;
 
-    this.endUseChartData = {
-      labels,
-      datasets: endUseKeys.map((key, i) => ({
-        label: key,
-        data: baselineByEndUse ? [valueFor(baselineByEndUse, key), valueFor(currentByEndUse, key)] : [valueFor(currentByEndUse, key)],
-        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
-      })),
-    };
+    this.endUseChartData = endUseKeys.map((key, i) => ({
+      type: 'bar',
+      name: key,
+      x: labels,
+      y: baselineByEndUse ? [valueFor(baselineByEndUse, key), valueFor(currentByEndUse, key)] : [valueFor(currentByEndUse, key)],
+      marker: { color: CHART_COLORS[i % CHART_COLORS.length] },
+    }));
   }
 
   exportMos(): void {
@@ -232,4 +236,44 @@ export class TimeseriesComponent implements OnInit {
         },
       });
   }
+
+  /** Download the actual OpenStudio building energy model(s) for the composite's representative
+   * building(s) -- one real model per component (ComStock: gzipped ".osm.gz"; ResStock: a ".zip" of the
+   * model + its schedule files), bundled into one ".zip" if there's more than one component. Reuses this
+   * page's already-resolved `component_bldg_ids` (the same bldg_id(s) shown in "Representative
+   * building(s)" above and used for the time series/LDC/heat map) so the downloaded model always matches
+   * what's already displayed, instead of an independently auto-selected building. */
+  downloadBuildingModels(): void {
+    const data = this.timeseries();
+    this.downloadingModels.set(true);
+    this.errorMessage.set(null);
+    this.api
+      .downloadBuildingEnergyModels({
+        components: this.compositeState.components(),
+        state: this.compositeState.state(),
+        county_name: this.compositeState.countyName(),
+        upgrade: this.compositeState.upgrade(),
+        bldg_ids: data?.component_bldg_ids ?? null,
+      })
+      .subscribe({
+        next: (blob) => {
+          const url = URL.createObjectURL(blob);
+          const anchor = document.createElement('a');
+          anchor.href = url;
+          const components = this.compositeState.components();
+          anchor.download =
+            components.length === 1
+              ? `${components[0].product}_${components[0].building_type}_model.${components[0].product === 'resstock' ? 'zip' : 'osm.gz'}`
+              : `composite_building_energy_models_${this.compositeState.state()}.zip`;
+          anchor.click();
+          URL.revokeObjectURL(url);
+          this.downloadingModels.set(false);
+        },
+        error: (err) => {
+          this.errorMessage.set(err?.error?.error ?? 'Failed to download the building energy model(s).');
+          this.downloadingModels.set(false);
+        },
+      });
+  }
+
 }

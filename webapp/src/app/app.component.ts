@@ -10,6 +10,8 @@ import { NavigationEnd, Router, RouterLink, RouterLinkActive, RouterOutlet } fro
 import { filter } from 'rxjs';
 import { map } from 'rxjs/operators';
 
+import { ScenarioHistoryService } from './services/scenario-history.service';
+
 interface NavItem {
   path: string;
   label: string;
@@ -36,6 +38,7 @@ interface NavItem {
 export class AppComponent {
   private readonly breakpointObserver = inject(BreakpointObserver);
   private readonly router = inject(Router);
+  readonly scenarioHistory = inject(ScenarioHistoryService);
 
   title = 'BuildStock Composite Building Explorer';
 
@@ -46,6 +49,9 @@ export class AppComponent {
     { path: '/timeseries', label: 'Time Series', icon: 'show_chart' },
     { path: '/measures', label: 'Measures', icon: 'checklist' },
   ];
+
+  /** Most-recent-first, up to 10 -- see ScenarioHistoryService. */
+  readonly scenarios = this.scenarioHistory.scenarios;
 
   /** True on phone-sized viewports (CDK's standard "Handset" breakpoint query) -- drives the
    * sidenav between a permanent side panel (desktop/tablet) and an over-content drawer (mobile). */
@@ -64,5 +70,13 @@ export class AppComponent {
         this.sidenav?.close();
       }
     });
+  }
+
+  /** Remove one scenario from the history without navigating to it (used by the nav item's own remove
+   * button, which must stop the click from also triggering the containing link). */
+  removeScenario(event: Event, id: string): void {
+    event.preventDefault();
+    event.stopPropagation();
+    this.scenarioHistory.remove(id);
   }
 }

@@ -80,8 +80,11 @@ class ComStockProcessor(BuildStockProcessor):
         self.min_sqft = min_sqft
         self.max_sqft = max_sqft
 
-        if not self.base_dir.exists():
-            self.base_dir.mkdir()
+        # `parents=True, exist_ok=True` makes this safe to call concurrently -- e.g. two composite
+        # components sharing this same product both construct a processor with the same base_dir in
+        # parallel (see composite.pull_composite_time_series()), so a plain exists()-check-then-mkdir()
+        # would otherwise race.
+        self.base_dir.mkdir(parents=True, exist_ok=True)
 
         release_info = SUPPORTED_RELEASES[release]
 
@@ -140,6 +143,14 @@ class ComStockProcessor(BuildStockProcessor):
         if self.building_type != "All":
             meta_df = meta_df[meta_df["in.comstock_building_type"] == self.building_type]
         return meta_df
+
+    def _building_energy_model_key(self, bldg_id: int, upgrade: str) -> str:
+        # e.g. building_energy_models/upgrade=00/bldg0000001-up00.osm.gz -- ComStock zero-pads the
+        # "upgrade=" folder name to 2 digits (unlike ResStock's unpadded "upgrade=0"), and publishes each
+        # model as a gzipped OpenStudio ".osm.gz" file (a single whole-building model, unlike ResStock's
+        # per-dwelling-unit ".zip" bundle -- see resstock.py's own `_building_energy_model_key`).
+        padded_upgrade = f"{int(upgrade):02d}"
+        return f"building_energy_models/upgrade={padded_upgrade}/bldg{bldg_id:07d}-up{padded_upgrade}.osm.gz"
 
     def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
         """Download (if needed) and return the measure name crosswalk for this release.

@@ -1,18 +1,18 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router } from '@angular/router';
-import { ChartConfiguration } from 'chart.js';
+import type { Data, Layout } from 'plotly.js-dist-min';
 
 import { ApiService } from '../../services/api.service';
 import { CompositeStateService } from '../../services/composite-state.service';
 import { MetadataSummaryResponse } from '../../models/api.models';
 import { CHART_COLORS } from '../../models/chart-colors';
-import { ChartComponent } from '../chart/chart.component';
+import { PlotComponent } from '../plot/plot.component';
 
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, ChartComponent],
+  imports: [CommonModule, PlotComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
 })
@@ -21,18 +21,19 @@ export class DashboardComponent implements OnInit {
   loading = signal(false);
   errorMessage = signal<string | null>(null);
 
-  byFuelChartData?: ChartConfiguration<'pie'>['data'];
-  byEndUseChartData?: ChartConfiguration<'bar'>['data'];
-  readonly pieOptions: ChartConfiguration<'pie'>['options'] = {
-    responsive: true,
-    maintainAspectRatio: false,
+  byFuelChartData?: Data[];
+  byEndUseChartData?: Data[];
+  readonly pieLayout: Partial<Layout> = {
+    autosize: true,
+    margin: { l: 20, r: 20, t: 20, b: 20 },
   };
-  readonly stackedBarOptions: ChartConfiguration<'bar'>['options'] = {
-    responsive: true,
-    maintainAspectRatio: false,
-    scales: {
-      x: { stacked: true },
-      y: { stacked: true, title: { display: true, text: 'Annual energy (kWh)' } },
+  readonly stackedBarLayout: Partial<Layout> = {
+    autosize: true,
+    barmode: 'stack',
+    margin: { l: 60, r: 20, t: 20, b: 50 },
+    xaxis: {},
+    yaxis: {
+      title: { text: 'Annual energy (kWh)' },
     },
   };
 
@@ -74,22 +75,20 @@ export class DashboardComponent implements OnInit {
   }
 
   private buildCharts(result: MetadataSummaryResponse): void {
-    this.byFuelChartData = {
-      labels: result.by_fuel.map((item) => item.key),
-      datasets: [
-        {
-          data: result.by_fuel.map((item) => Math.round(item.annual_energy_kwh)),
-          backgroundColor: CHART_COLORS,
-        },
-      ],
-    };
-    this.byEndUseChartData = {
-      labels: ['Composite'],
-      datasets: result.by_end_use.map((item, i) => ({
-        label: item.key,
-        data: [Math.round(item.annual_energy_kwh)],
-        backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
-      })),
-    };
+    this.byFuelChartData = [
+      {
+        type: 'pie',
+        labels: result.by_fuel.map((item) => item.key),
+        values: result.by_fuel.map((item) => Math.round(item.annual_energy_kwh)),
+        marker: { colors: CHART_COLORS },
+      },
+    ];
+    this.byEndUseChartData = result.by_end_use.map((item, i) => ({
+      type: 'bar',
+      name: item.key,
+      x: ['Composite'],
+      y: [Math.round(item.annual_energy_kwh)],
+      marker: { color: CHART_COLORS[i % CHART_COLORS.length] },
+    }));
   }
 }

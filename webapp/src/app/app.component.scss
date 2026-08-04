@@ -58,6 +58,69 @@
   padding-top: 0.5rem;
 }
 
+.sidenav-section-header {
+  padding: 1rem 1rem 0.35rem;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--color-muted);
+}
+
+.scenario-item {
+  // Angular Material's own list-item content wrapper is a flex row that, by default, won't let its text
+  // content shrink below its natural width (a classic flexbox gotcha) -- without min-width: 0 here, long
+  // scenario labels overflow the sidebar instead of being truncated by the ellipsis rules below.
+  ::ng-deep .mdc-list-item__content {
+    min-width: 0;
+  }
+
+  ::ng-deep [matListItemTitle],
+  ::ng-deep [matListItemLine] {
+    display: block;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+  }
+
+  ::ng-deep [matListItemTitle] {
+    font-size: 0.82rem;
+    line-height: 1.3;
+  }
+
+  ::ng-deep [matListItemLine] {
+    font-size: 0.72rem;
+    color: var(--color-muted);
+  }
+
+  ::ng-deep [matListItemIcon] {
+    // A little smaller than the primary nav icons -- scenarios are secondary/dense entries, so this
+    // reclaims horizontal space for the label text itself.
+    font-size: 20px;
+    width: 20px;
+    height: 20px;
+  }
+
+  .scenario-remove {
+    opacity: 0;
+    transition: opacity 0.1s ease-in-out;
+    width: 28px;
+    height: 28px;
+
+    mat-icon {
+      font-size: 16px;
+      width: 16px;
+      height: 16px;
+      line-height: 16px;
+    }
+  }
+
+  &:hover .scenario-remove {
+    opacity: 1;
+  }
+}
+
 .sidenav-footer {
   padding: 0.75rem;
   border-top: 1px solid var(--color-border);

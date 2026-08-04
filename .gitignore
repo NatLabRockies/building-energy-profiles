@@ -10,6 +10,7 @@ __pycache__
 
 # local dev tool artifacts (Playwright MCP logs/snapshots, etc.)
 .playwright-mcp/
+.tmp_presentation/
 
 cache
 dist
@@ -22,6 +23,13 @@ source_files/*.pbf
 # Large files - do not commit downloaded/generated ComStock/ResStock datasets
 datasets/*
 !datasets/README.md
+
+# Local generated reports and analysis outputs
+outputs/
+generated/
+
+# Ad-hoc/generated analysis and infographic scripts
+scripts/
 
 # added by MSweeney
 sampledata

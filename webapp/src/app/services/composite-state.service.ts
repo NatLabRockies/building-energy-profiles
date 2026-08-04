@@ -18,6 +18,7 @@ export class CompositeStateService {
   }
 
   hasComposite(): boolean {
-    return this.components().length > 0 && this.state().length === 2;
+    const state = this.state();
+    return this.components().length > 0 && (state.length === 2 || state.toUpperCase() === 'ALL');
   }
 }
