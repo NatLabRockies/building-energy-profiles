@@ -1,0 +1,72 @@
+<div class="page">
+  <h1>Time Series</h1>
+  <p class="intro">
+    Hourly-resampled 8760 time series for the composite building
+    (State: <strong>{{ compositeState.state() }}</strong>, Upgrade: <strong>{{ compositeState.upgrade() }}</strong>).
+  </p>
+
+  @if (loading()) {
+    <p>Downloading and combining time series&hellip; this can take a little while on the first request.</p>
+  }
+  @if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  }
+
+  @if (timeseries(); as ts) {
+    @if (ts.warnings.length > 0) {
+      <div class="warn">
+        @for (w of ts.warnings; track w) {
+          <p>&#9888;&#65039; {{ w }}</p>
+        }
+      </div>
+    }
+
+    <div class="controls">
+      <label>
+        Column
+        <select [ngModel]="selectedColumn()" (ngModelChange)="onColumnChange($event)">
+          @for (column of ts.columns; track column) {
+            <option [value]="column">{{ columnLabel(column) }}</option>
+          }
+        </select>
+      </label>
+      <button class="primary" (click)="exportMos()" [disabled]="exporting()">
+        {{ exporting() ? 'Exporting...' : 'Export thermal loads (.mos)' }}
+      </button>
+    </div>
+
+    <section class="chart-box heatmap-box">
+      <h3>8760 heat map &mdash; {{ columnLabel(selectedColumn()) }}</h3>
+      <!-- Hourly-resampled energy (kWh per hour) is numerically equal to average power (kW) over that
+           hour -- see the load duration curve's y-axis note below for the same reasoning. -->
+      <app-heatmap [points]="heatmapPoints" unitsLabel="kW"></app-heatmap>
+    </section>
+
+    <section class="chart-box ldc-box">
+      <h3>Load duration curve &mdash; {{ columnLabel(selectedColumn()) }}</h3>
+      @if (isComparingToBaseline) {
+        <p class="chart-note">Comparing baseline (upgrade 0) against the composite's configured upgrade.</p>
+      }
+      <div class="chart-canvas-wrap">
+        @if (loadDurationChartData) {
+          <app-chart type="line" [data]="loadDurationChartData" [options]="lineOptions"></app-chart>
+        }
+      </div>
+    </section>
+
+    <section class="chart-box end-use-box">
+      <h3>Annual energy by end use</h3>
+      <div class="chart-canvas-wrap">
+        @if (endUseChartData) {
+          <app-chart type="bar" [data]="endUseChartData" [options]="stackedBarOptions"></app-chart>
+        }
+      </div>
+    </section>
+
+    <p class="mos-note">
+      The Modelica export sums heating/cooling end-use energy consumption across fuels and converts it to
+      average power (W) &mdash; an approximation of HVAC energy input, not a directly-simulated thermal
+      load. See the file's own header comments for details.
+    </p>
+  }
+</div>

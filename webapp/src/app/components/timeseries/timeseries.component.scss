@@ -1,0 +1,38 @@
+.controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin: 1rem 0;
+
+  label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+    color: var(--color-muted);
+  }
+}
+
+.heatmap-box {
+  height: auto;
+}
+
+.ldc-box {
+  height: 360px;
+}
+
+.end-use-box {
+  height: 360px;
+}
+
+.chart-note {
+  color: var(--color-muted);
+  font-size: 0.8rem;
+  margin: 0 0 0.5rem;
+}
+
+.mos-note {
+  color: var(--color-muted);
+  font-size: 0.85rem;
+  max-width: 70ch;
+}

@@ -153,7 +153,7 @@ class BuildStockProcessor(ABC):
 
         return names
 
-    def _available_states(self) -> list[str]:
+    def available_states(self) -> list[str]:
         """Return the state abbreviations that have published metadata for this release."""
         prefixes = self._list_common_prefixes(self._metadata_key_prefix)
         return [name.split("=", 1)[1] for name in prefixes if name.startswith("state=")]

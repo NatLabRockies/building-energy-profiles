@@ -12,6 +12,12 @@ repos:
         args: ['--maxkb=5000']
       - id: trailing-whitespace
       - id: check-json
+        exclude: |
+          (?x)(
+            ^webapp/tsconfig\.spec\.json$|
+            ^webapp/tsconfig\.app\.json$|
+            ^webapp/tsconfig\.json$
+          )
       - id: check-toml
       - id: check-xml
       - id: check-yaml
@@ -28,6 +34,12 @@ repos:
       - id: pretty-format-json
         args: ['--autofix', '--no-sort-keys']
         files: \.(json|template)$
+        exclude: |
+          (?x)(
+            ^webapp/tsconfig\.spec\.json$|
+            ^webapp/tsconfig\.app\.json$|
+            ^webapp/tsconfig\.json$
+          )
   # https://docs.astral.sh/ruff/integrations/#pre-commit
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.15.22

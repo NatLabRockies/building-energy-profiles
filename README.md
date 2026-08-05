@@ -23,6 +23,21 @@ uv sync --group dev
 The project uses a standard `src/` package layout. `uv sync` installs `buildstock_processor` into the project
 environment as an editable package.
 
+## Local Development
+
+The repo also includes a FastAPI backend (`api/`) and an Angular webapp (`webapp/`) for interactively exploring
+BuildStock data in a browser. Install the extra dependencies, then run both together with:
+
+```bash
+uv sync --group dev --group api
+cd webapp && npm install && cd ..
+
+make dev
+```
+
+`make dev` runs [`dev.sh`](dev.sh), which starts the FastAPI backend at http://localhost:8000 and the Angular
+frontend at http://localhost:4200, and stops both on Ctrl+C.
+
 ## Documentation
 
 - [Usage guide](docs/usage.md): installation, searches, time series, upgrades, weights, total-energy calculations,
@@ -102,6 +117,20 @@ energy_star_property_types_for_buildstock_type("comstock", "SmallOffice")
 # ('Bank Branch', 'Financial Office', 'Fire Station', ...) -- reverse lookup
 ```
 
+## Composite ("Mixed-Use") Building Types
+
+Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that is 70% office space over 30% ground-floor retail. `CompositeBuildingType` (see [docs/usage.md](docs/usage.md#composite-mixed-use-building-types) and [`03_composite_building_example.ipynb`](03_composite_building_example.ipynb)) models this as a fraction-weighted combination of two or more `(product, building_type)` components -- including mixing ComStock and ResStock components (e.g. ground-floor retail under apartments). `pull_composite_time_series()` downloads a representative building's time series per component and auto-stitches them into one synthetic composite time series; `combine_composite_time_series()` does the combining step alone if you've already downloaded component time series yourself.
+
+```python
+from buildstock_processor import CompositeBuildingType, pull_composite_time_series
+
+office_retail = CompositeBuildingType.from_fractions(
+    "70% MediumOffice / 30% RetailStripmall",
+    {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3},
+)
+combined, components = pull_composite_time_series(office_retail, save_dir=composite_dir, state="DE")
+```
+
 ## Package Layout
 
 ```text
@@ -111,7 +140,8 @@ src/buildstock_processor/
 |-- comstock.py                  # ComStock implementation and releases
 |-- resstock.py                  # ResStock implementation and releases
 |-- data_dictionary.py           # packaged building-type/result-variable/upgrade-package dictionary
-`-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
+|-- energy_star_crosswalk.py     # packaged ENERGY STAR -> BuildStock building-type crosswalk
+`-- composite.py                 # CompositeBuildingType + combine/pull composite time series
 ```
 
 ## ComStockProcessor Class

@@ -1,0 +1,266 @@
+// Include theming for Angular Material with `mat.theme()`.
+// This Sass mixin will define CSS variables that are used for styling Angular Material
+// components according to the Material 3 design spec.
+// Learn more about theming and how to use it for your application's
+// custom components at https://material.angular.dev/guide/theming
+@use '@angular/material' as mat;
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html {
+  height: 100%;
+  @include mat.theme((
+    color: (
+      primary: mat.$azure-palette,
+      tertiary: mat.$blue-palette,
+    ),
+    typography: 'Inter Variable',
+    density: 0,
+  ));
+}
+
+body {
+  // Default the application to a light color theme. This can be changed to
+  // `dark` to enable the dark color theme, or to `light dark` to defer to the
+  // user's system settings.
+  color-scheme: light;
+
+  // Set a default background, font and text colors for the application using
+  // Angular Material's system-level CSS variables. Learn more about these
+  // variables at https://material.angular.dev/guide/system-variables
+  background-color: var(--mat-sys-surface);
+  color: var(--mat-sys-on-surface);
+  font: var(--mat-sys-body-medium);
+
+  // Reset the user agent margin.
+  margin: 0;
+  height: 100%;
+}
+/* Global styles for the composite building explorer webapp. Deliberately minimal/dependency-free (no
+   component library) so the app stays lightweight -- just enough for a clean, readable dashboard/table/
+   form UI. */
+
+:root {
+  --color-bg: #f8fafc;
+  --color-surface: #ffffff;
+  --color-border: #e2e8f0;
+  --color-text: #1e293b;
+  --color-muted: #64748b;
+  --color-primary: #2563eb;
+  --color-primary-dark: #1d4ed8;
+  --color-danger: #dc2626;
+  --color-warn-bg: #fef3c7;
+  --color-warn-text: #92400e;
+  --radius: 8px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--color-bg);
+  color: var(--color-text);
+  font-family:
+    'Inter Variable',
+    system-ui,
+    -apple-system,
+    'Segoe UI',
+    Roboto,
+    sans-serif;
+}
+
+h1,
+h2,
+h3 {
+  font-weight: 600;
+  margin: 0 0 0.5rem;
+}
+
+a {
+  color: var(--color-primary);
+}
+
+.page {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 1.5rem;
+}
+
+.intro {
+  color: var(--color-muted);
+  max-width: 70ch;
+}
+
+button {
+  cursor: pointer;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+  color: var(--color-text);
+
+  &:hover:not(:disabled) {
+    background: #f1f5f9;
+  }
+
+  &:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  &.primary {
+    background: var(--color-primary);
+    border-color: var(--color-primary);
+    color: white;
+
+    &:hover:not(:disabled) {
+      background: var(--color-primary-dark);
+    }
+  }
+}
+
+input,
+select {
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 0.4rem 0.6rem;
+  font-size: 0.9rem;
+  background: var(--color-surface);
+  color: var(--color-text);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 1rem 0;
+  background: var(--color-surface);
+  border-radius: var(--radius);
+  overflow: hidden;
+
+  th,
+  td {
+    text-align: left;
+    padding: 0.5rem 0.75rem;
+    border-bottom: 1px solid var(--color-border);
+    font-size: 0.85rem;
+  }
+
+  th {
+    background: #f1f5f9;
+    color: var(--color-muted);
+    font-weight: 600;
+  }
+
+  tr.unmapped {
+    background: #fef2f2;
+  }
+}
+
+.badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: capitalize;
+
+  &.exact {
+    background: #dcfce7;
+    color: #166534;
+  }
+
+  &.approximate {
+    background: var(--color-warn-bg);
+    color: var(--color-warn-text);
+  }
+
+  &.unmapped {
+    background: #fee2e2;
+    color: #991b1b;
+  }
+}
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0;
+}
+
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+
+  .card-label {
+    color: var(--color-muted);
+    font-size: 0.8rem;
+    text-transform: uppercase;
+    letter-spacing: 0.03em;
+  }
+
+  .card-value {
+    font-size: 1.6rem;
+    font-weight: 700;
+    margin-top: 0.25rem;
+  }
+
+  .card-unit {
+    font-size: 0.85rem;
+    color: var(--color-muted);
+    font-weight: 400;
+    margin-left: 0.25rem;
+  }
+}
+
+.error {
+  color: var(--color-danger);
+  font-weight: 500;
+}
+
+.warn {
+  background: var(--color-warn-bg);
+  color: var(--color-warn-text);
+  padding: 0.75rem 1rem;
+  border-radius: var(--radius);
+}
+
+.chart-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: 1.5rem;
+  margin: 1.5rem 0;
+}
+
+.chart-box {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  height: 320px;
+  display: flex;
+  flex-direction: column;
+
+  h3 {
+    font-size: 0.95rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .chart-canvas-wrap {
+    flex: 1;
+    position: relative;
+    // Flex items default to `min-height: auto`, which sizes them to their content (the chart canvas)
+    // instead of respecting the flex-basis -- without this, Chart.js's canvas can grow past the fixed
+    // .chart-box height and visually overflow the card.
+    min-height: 0;
+    overflow: hidden;
+  }
+}

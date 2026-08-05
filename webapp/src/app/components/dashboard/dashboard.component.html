@@ -1,0 +1,95 @@
+<div class="page">
+  <h1>Energy Dashboard</h1>
+  <p class="intro">
+    State: <strong>{{ compositeState.state() }}</strong> &middot; Upgrade: <strong>{{ compositeState.upgrade() }}</strong>
+    &middot;
+    @for (c of compositeState.components(); track c.building_type + c.product) {
+      @if (c.sqft) {
+        <span class="component-chip">{{ c.label || c.building_type }} ({{ c.sqft | number }} sqft)</span>
+      } @else {
+        <span class="component-chip">{{ c.label || c.building_type }} ({{ (c.fraction * 100).toFixed(0) }}%)</span>
+      }
+    }
+  </p>
+
+  @if (loading()) {
+    <p>Loading metadata summary&hellip;</p>
+  }
+  @if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  }
+
+  @if (summary(); as s) {
+    @if (s.warnings.length > 0) {
+      <div class="warn">
+        @for (w of s.warnings; track w) {
+          <p>&#9888;&#65039; {{ w }}</p>
+        }
+      </div>
+    }
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Weighted Site EUI</div>
+        <div class="card-value">{{ s.weighted_site_eui_kbtu_per_ft2 | number: '1.1-1' }}<span class="card-unit">kBtu/ft²</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Annual Site Energy</div>
+        <div class="card-value">{{ s.weighted_annual_site_energy_kwh | number: '1.0-0' }}<span class="card-unit">kWh</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Avg. Floor Area</div>
+        <div class="card-value">{{ s.weighted_avg_sqft | number: '1.0-0' }}<span class="card-unit">ft²</span></div>
+      </div>
+      <div class="card">
+        <div class="card-label">Sample Buildings</div>
+        <div class="card-value">{{ s.weighted_building_count | number }}</div>
+      </div>
+    </div>
+
+    <div class="chart-grid">
+      <div class="chart-box">
+        <h3>Annual energy by fuel</h3>
+        <div class="chart-canvas-wrap">
+          @if (byFuelChartData) {
+            <app-chart type="pie" [data]="byFuelChartData" [options]="pieOptions"></app-chart>
+          }
+        </div>
+      </div>
+      <div class="chart-box">
+        <h3>Annual energy by end use</h3>
+        <div class="chart-canvas-wrap">
+          @if (byEndUseChartData) {
+            <app-chart type="bar" [data]="byEndUseChartData" [options]="stackedBarOptions"></app-chart>
+          }
+        </div>
+      </div>
+    </div>
+
+    <h2>Components</h2>
+    <table>
+      <thead>
+        <tr>
+          <th>Building type</th>
+          <th>Fraction</th>
+          <th>Buildings sampled</th>
+          <th>Avg. sqft</th>
+          <th>Site EUI (kBtu/ft&sup2;)</th>
+          <th>Annual site energy (kWh)</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (c of s.components; track c.building_type + c.product) {
+          <tr>
+            <td>{{ c.label || c.building_type }} ({{ c.product }})</td>
+            <td>{{ (c.fraction * 100).toFixed(0) }}%</td>
+            <td>{{ c.building_count | number }}</td>
+            <td>{{ c.avg_sqft | number: '1.0-0' }}</td>
+            <td>{{ c.site_eui_kbtu_per_ft2 | number: '1.1-1' }}</td>
+            <td>{{ c.annual_site_energy_kwh | number: '1.0-0' }}</td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  }
+</div>
