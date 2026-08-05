@@ -67,7 +67,7 @@ jobs:
           --output dc-stock-analysis-${{ github.run_id }}.html
       - name: Upload Washington DC notebook artifact
         if: ${{ matrix.python-version == '3.12' && matrix.os == 'ubuntu-latest' }}
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: dc-stock-analysis-${{ github.run_id }}
           path: dc-stock-analysis-${{ github.run_id }}.html
