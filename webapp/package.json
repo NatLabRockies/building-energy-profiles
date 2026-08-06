@@ -9,6 +9,9 @@
     "test": "ng test"
   },
   "private": true,
+  "engines": {
+    "node": "^22.22.3 || >=24.15.0"
+  },
   "dependencies": {
     "@angular/animations": "^22.1.0",
     "@angular/cdk": "^22.0.7",
@@ -32,11 +35,11 @@
     "zone.js": "~0.16.2"
   },
   "devDependencies": {
-    "@angular-devkit/build-angular": "^21.2.19",
+    "@angular-devkit/build-angular": "^22.1.2",
     "@angular/cli": "^22.1.2",
     "@angular/compiler-cli": "^22.1.0",
     "@types/jasmine": "~6.0.0",
-    "autoprefixer": "^10.5.4",
+    "@tailwindcss/postcss": "^4.3.3",
     "jasmine-core": "~6.3.0",
     "karma": "~6.4.0",
     "karma-chrome-launcher": "~3.2.0",
@@ -45,6 +48,7 @@
     "karma-jasmine-html-reporter": "~2.2.0",
     "postcss": "^8.5.25",
     "tailwindcss": "^4.3.3",
-    "typescript": "~7.0.2"
-  }
+    "typescript": "~6.0.3"
+  },
+  "packageManager": "pnpm@11.0.8+sha512.4c4097e1dd2d42372c4e7fa5a791ff28fc75a484c7ac192e64b1df0fdef17594ba982f9b4fed9adfb3c757846f565b799b2763fb3733d1de1bcb82cf46684912"
 }

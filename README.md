@@ -26,11 +26,12 @@ environment as an editable package.
 ## Local Development
 
 The repo also includes a FastAPI backend (`api/`) and an Angular webapp (`webapp/`) for interactively exploring
-BuildStock data in a browser. Install the extra dependencies, then run both together with:
+BuildStock data in a browser. The webapp uses [pnpm](https://pnpm.io) (enable it via `corepack enable pnpm`, which
+ships with Node.js). Install the extra dependencies, then run both together with:
 
 ```bash
 uv sync --group dev --group api
-cd webapp && npm install && cd ..
+cd webapp && pnpm install && cd ..
 
 make dev
 ```
