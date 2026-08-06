@@ -1,4 +1,4 @@
-# BuildStock Processor
+# Building Energy Profiles
 
 A Python package for downloading and analyzing NLR ComStock and ResStock metadata, annual results, upgrade
 packages, and individual-building time series from the public OEDI data lake.

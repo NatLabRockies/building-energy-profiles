@@ -1,4 +1,4 @@
-# Extending BuildStock Processor
+# Extending Building Energy Profiles
 
 `BuildStockProcessor` is an abstract base class for datasets that use the common OEDI BuildStock conventions.
 It is exported from the top-level package:

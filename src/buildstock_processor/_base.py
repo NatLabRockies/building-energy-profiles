@@ -1,5 +1,5 @@
 """
-BuildStock Processor - shared infrastructure for downloading and processing
+Building Energy Profiles - shared infrastructure for downloading and processing
 NLR building stock datasets (ComStock, ResStock) hosted on the OEDI data lake.
 
 ComStockProcessor and ResStockProcessor both build on this module: the two datasets share the same S3
