@@ -8,6 +8,7 @@ Every endpoint in `api/main.py` is a thin wrapper around a function here. Keepin
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from pathlib import Path
 from typing import Any
 
@@ -18,12 +19,21 @@ from api.mos_export import MosExportError, build_thermal_load_mos
 from api.schemas import (
     AvailableCountiesResponse,
     AvailableStatesResponse,
+    BuildingDistributionRequest,
+    BuildingDistributionResponse,
+    ComponentDistribution,
+    ComponentFilterOptions,
     ComponentSummary,
     CompositeComponentSpec,
     CompositeResolveRequest,
     CompositeResolveResponse,
+    DistributionPointOut,
     EndUseValue,
     EnergyStarTypeInfo,
+    FilterColumnOptions,
+    FilterOptionsRequest,
+    FilterOptionsResponse,
+    FilterValueCount,
     MeasureInfo,
     MeasureSavings,
     MeasuresCompareRequest,
@@ -37,6 +47,7 @@ from api.schemas import (
     TimeseriesResponse,
 )
 from buildstock_processor import location
+from buildstock_processor.building_distribution import compute_building_distribution
 from buildstock_processor.composite import (
     CompositeBuildingType,
     CompositeComponent,
@@ -84,6 +95,31 @@ DEFAULT_COOLING_COLUMNS = [
     "out.district_cooling.cooling.energy_consumption",
 ]
 
+# Curated, per-product subset of "in.*" metadata columns exposed as population filters (see
+# get_filter_options()) -- BuildStock metadata carries dozens to ~190 "in.*" columns per product, most of
+# which are identifiers (census tract/PUMA/county GISJOINs), simulation bookkeeping, or too granular to be
+# a meaningful filter -- this intentionally curates down to a handful of well-known, broadly-applicable
+# building characteristics a user would actually want to narrow a population by. {product: [(column,
+# display_name), ...]}.
+CURATED_FILTER_COLUMNS: dict[str, list[tuple[str, str]]] = {
+    "comstock": [
+        ("in.vintage", "Vintage"),
+        ("in.hvac_system_type", "HVAC system type"),
+        ("in.number_of_stories", "Number of stories"),
+        ("in.wall_construction_type", "Wall construction"),
+        ("in.window_to_wall_ratio_category", "Window-to-wall ratio"),
+        ("in.heating_fuel", "Heating fuel"),
+    ],
+    "resstock": [
+        ("in.vintage", "Vintage"),
+        ("in.hvac_heating_type", "HVAC heating type"),
+        ("in.hvac_cooling_type", "HVAC cooling type"),
+        ("in.geometry_foundation_type", "Foundation type"),
+        ("in.geometry_stories", "Number of stories"),
+        ("in.insulation_wall", "Wall insulation"),
+    ],
+}
+
 
 class ServiceError(ValueError):
     """A user-facing error (bad input, no data found, etc.) -- translated to an HTTP 400 by the API layer."""
@@ -126,6 +162,27 @@ def _find_column(columns: pd.Index, prefix: str) -> str | None:
         if column == prefix or column.startswith(prefix + ".."):
             return str(column)
     return None
+
+
+def _apply_component_filters(metadata: pd.DataFrame, filters: dict[str, list[str]] | None) -> pd.DataFrame:
+    """Narrow `metadata` to rows matching every column in `filters` -- OR within one column's allowed
+    values, AND across columns (e.g. `{"in.vintage": ["2000 to 2012", "2013 to 2018"], "in.heating_fuel":
+    ["Electricity"]}` keeps only electric-heated buildings from either of those two vintage bands).
+
+    A filter column not present in `metadata` (e.g. stale filters left over from a different building
+    type/product) is silently skipped rather than raising, since `CompositeComponentSpec.filters` is
+    shared across every component in a request regardless of whether a given column applies to it.
+    """
+    if not filters:
+        return metadata
+    for column, allowed_values in filters.items():
+        if not allowed_values:
+            continue
+        matched_column = _find_column(metadata.columns, column)
+        if not matched_column:
+            continue
+        metadata = metadata[metadata[matched_column].astype(str).isin(allowed_values)]
+    return metadata
 
 
 def _target_sqft_map(components: list[CompositeComponentSpec]) -> dict[tuple[str, str], float] | None:
@@ -323,6 +380,127 @@ def resolve_composite(request: CompositeResolveRequest, settings: Settings) -> C
     )
 
 
+def _distribution_point_to_schema(point: Any) -> DistributionPointOut:
+    return DistributionPointOut(**dataclasses.asdict(point))
+
+
+def get_building_distributions(request: BuildingDistributionRequest, settings: Settings) -> BuildingDistributionResponse:
+    """For each composite component, download its metadata and compute a site-EUI distribution ("PDF") --
+    see `buildstock_processor.building_distribution.compute_building_distribution`.
+
+    Lets a caller (the webapp's building-selection step) show, for each component in a mixed-use
+    composite, the spread of real sampled buildings of that type/location, so a user can either click a
+    point on the curve or jump to a percentile/mean shortcut to pin a specific representative `bldg_id`
+    (persisted the same way as `resolve_composite()`'s sqft-mode auto-selection -- see
+    `CompositeComponentSpec.bldg_id`) for downstream time-series-based pages.
+
+    A component whose metadata can't be downloaded (or has no usable site EUI) is skipped with a warning
+    rather than failing the whole request, so one bad component doesn't block selecting buildings for the
+    rest of a mix.
+    """
+    distributions: list[ComponentDistribution] = []
+    warnings: list[str] = []
+
+    for component in request.components:
+        label = component.label or component.building_type
+        try:
+            processor = _build_processor(
+                settings.cache_dir,
+                component.product,
+                request.state,
+                request.county_name,
+                component.building_type,
+                request.upgrade,
+                request.min_sqft,
+                request.max_sqft,
+            )
+            metadata = processor.process_metadata(save_dir=processor.base_dir)
+            metadata = _apply_component_filters(metadata, component.filters)
+            distribution = compute_building_distribution(metadata, bins=request.bins)
+        except Exception as exc:
+            warnings.append(f"Could not compute a building distribution for {label} ({component.product}): {exc}")
+            continue
+
+        distributions.append(
+            ComponentDistribution(
+                product=component.product,
+                building_type=component.building_type,
+                label=component.label,
+                metric=distribution.metric,
+                unit=distribution.unit,
+                sample_size=distribution.sample_size,
+                mean_value=distribution.mean_value,
+                points=[_distribution_point_to_schema(p) for p in distribution.points],
+                histogram_bin_edges=distribution.histogram_bin_edges,
+                histogram_counts=distribution.histogram_counts,
+                histogram_density=distribution.histogram_density,
+                kde_x=distribution.kde_x,
+                kde_y=distribution.kde_y,
+                percentile_buildings={k: _distribution_point_to_schema(v) for k, v in distribution.percentile_buildings.items()},
+            )
+        )
+
+    return BuildingDistributionResponse(ok=True, state=request.state, distributions=distributions, warnings=warnings)
+
+
+def get_filter_options(request: FilterOptionsRequest, settings: Settings) -> FilterOptionsResponse:
+    """For each composite component, list curated metadata columns (see `CURATED_FILTER_COLUMNS`) with
+    their distinct values/counts in the current sample, to build a "narrow the population" filter UI.
+
+    Only includes a column if it's actually present for this component's product/building_type and has
+    more than one distinct value in the sample (a constant column isn't a useful filter). A component whose
+    metadata can't be downloaded is skipped with a warning rather than failing the whole request.
+    """
+    components: list[ComponentFilterOptions] = []
+    warnings: list[str] = []
+
+    for component in request.components:
+        label = component.label or component.building_type
+        try:
+            processor = _build_processor(
+                settings.cache_dir,
+                component.product,
+                request.state,
+                request.county_name,
+                component.building_type,
+                request.upgrade,
+                request.min_sqft,
+                request.max_sqft,
+            )
+            metadata = processor.process_metadata(save_dir=processor.base_dir)
+        except Exception as exc:
+            warnings.append(f"Could not load filter options for {label} ({component.product}): {exc}")
+            continue
+
+        column_options: list[FilterColumnOptions] = []
+        for column, display_name in CURATED_FILTER_COLUMNS.get(component.product, []):
+            matched_column = _find_column(metadata.columns, column)
+            if not matched_column:
+                continue
+            value_counts = metadata[matched_column].astype(str).value_counts()
+            if len(value_counts) < 2:
+                # A single-valued column (or one that's empty after dropna) can't narrow anything.
+                continue
+            column_options.append(
+                FilterColumnOptions(
+                    column=column,
+                    display_name=display_name,
+                    values=[FilterValueCount(value=str(value), count=int(count)) for value, count in value_counts.items()],
+                )
+            )
+
+        components.append(
+            ComponentFilterOptions(
+                product=component.product,
+                building_type=component.building_type,
+                label=component.label,
+                columns=column_options,
+            )
+        )
+
+    return FilterOptionsResponse(ok=True, components=components, warnings=warnings)
+
+
 def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) -> MetadataSummaryResponse:
     component_summaries: list[ComponentSummary] = []
     by_fuel: dict[str, float] = {}
@@ -331,6 +509,13 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
     weighted_site_energy = 0.0
     weighted_building_count = 0
     warnings: list[str] = []
+
+    # Parallel accumulation for the "selected buildings" weighted total (see
+    # MetadataSummaryResponse.weighted_selected_building_site_eui_kbtu_per_ft2) -- only meaningful once
+    # every component actually has a resolvable pinned building, tracked via `all_components_selected`.
+    weighted_selected_sqft = 0.0
+    weighted_selected_site_energy = 0.0
+    all_components_selected = True
 
     target_sqft_map = _target_sqft_map(request.components)
 
@@ -350,8 +535,10 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
         except Exception as exc:
             raise ServiceError(f"Failed to download metadata for {component.building_type} ({component.product}): {exc}") from exc
 
+        metadata = _apply_component_filters(metadata, component.filters)
         if metadata.empty:
-            raise ServiceError(f"No buildings found for {component.building_type} ({component.product}) in state={request.state!r}.")
+            reason = "the applied filters excluded every sampled building" if component.filters else f"in state={request.state!r}"
+            raise ServiceError(f"No buildings found for {component.building_type} ({component.product}) -- {reason}.")
 
         sqft_column = _find_column(metadata.columns, "in.sqft")
         avg_sqft = float(metadata[sqft_column].mean()) if sqft_column else 0.0
@@ -361,6 +548,27 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
 
         # Site EUI (energy per sqft) is an intensity, so it's unaffected by sqft-mode scaling either way.
         eui = (annual_site_energy * KWH_TO_KBTU) / avg_sqft if avg_sqft else 0.0
+
+        # The specific building pinned for this component (e.g. from the Select Buildings page), if any --
+        # its OWN sqft/energy/EUI, distinct from the population averages computed above.
+        selected_bldg_id = component.bldg_id
+        selected_sqft: float | None = None
+        selected_annual_site_energy: float | None = None
+        selected_eui: float | None = None
+        if selected_bldg_id is not None and sqft_column and site_energy_column:
+            selected_row = metadata[metadata["bldg_id"] == selected_bldg_id]
+            if not selected_row.empty:
+                selected_sqft = float(selected_row[sqft_column].iloc[0])
+                selected_annual_site_energy = float(selected_row[site_energy_column].iloc[0])
+                selected_eui = (selected_annual_site_energy * KWH_TO_KBTU) / selected_sqft if selected_sqft else None
+            else:
+                label = component.label or component.building_type
+                warnings.append(
+                    f"Pinned bldg_id {selected_bldg_id} for {label} ({component.product}) was not found in the current "
+                    "sample -- selected-building metrics are unavailable for this component."
+                )
+        if selected_eui is None:
+            all_components_selected = False
 
         if target_sqft_map is not None:
             if not avg_sqft:
@@ -391,6 +599,10 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
                 avg_sqft=display_sqft,
                 annual_site_energy_kwh=display_energy,
                 site_eui_kbtu_per_ft2=eui,
+                selected_bldg_id=selected_bldg_id,
+                selected_sqft=selected_sqft,
+                selected_annual_site_energy_kwh=selected_annual_site_energy,
+                selected_site_eui_kbtu_per_ft2=selected_eui,
             )
         )
 
@@ -401,6 +613,13 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
         weighted_sqft += scale * avg_sqft
         weighted_site_energy += scale * annual_site_energy
         weighted_building_count += len(metadata)
+
+        if selected_sqft is not None and selected_annual_site_energy is not None:
+            # Reuse the same per-component `scale` so the "selected buildings" weighted total is
+            # comparable (fraction- or target-sqft-weighted, matching the sample-average total above) --
+            # just substituting the pinned building's own values for the population average.
+            weighted_selected_sqft += scale * selected_sqft
+            weighted_selected_site_energy += scale * selected_annual_site_energy
 
         for variable in result_variables_from_columns(metadata.columns):
             if variable.metric != "energy_consumption" or variable.source is None or variable.end_use is None:
@@ -414,6 +633,11 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
                 by_end_use[variable.end_use] = by_end_use.get(variable.end_use, 0.0) + scale * float(value)
 
     weighted_eui = (weighted_site_energy * KWH_TO_KBTU) / weighted_sqft if weighted_sqft else 0.0
+    weighted_selected_eui = (
+        (weighted_selected_site_energy * KWH_TO_KBTU) / weighted_selected_sqft
+        if all_components_selected and weighted_selected_sqft
+        else None
+    )
 
     return MetadataSummaryResponse(
         ok=True,
@@ -424,6 +648,8 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
         weighted_avg_sqft=weighted_sqft,
         weighted_annual_site_energy_kwh=weighted_site_energy,
         weighted_site_eui_kbtu_per_ft2=weighted_eui,
+        weighted_selected_building_annual_site_energy_kwh=(weighted_selected_site_energy if all_components_selected else None),
+        weighted_selected_building_site_eui_kbtu_per_ft2=weighted_selected_eui,
         by_fuel=sorted((EndUseValue(key=k, annual_energy_kwh=v) for k, v in by_fuel.items()), key=lambda item: -item.annual_energy_kwh),
         by_end_use=sorted(
             (EndUseValue(key=k, annual_energy_kwh=v) for k, v in by_end_use.items()), key=lambda item: -item.annual_energy_kwh
@@ -524,8 +750,10 @@ def _pull_timeseries(
             sample = pd.DataFrame({"bldg_id": [sample_bldg_id], "in.state": [state]})
         else:
             metadata = processor.process_metadata(save_dir=processor.base_dir)
+            metadata = _apply_component_filters(metadata, component.filters)
             if metadata.empty:
-                raise ServiceError(f"No buildings found for {key} in state={state!r}.")
+                reason = "the applied filters excluded every sampled building" if component.filters else f"in state={state!r}"
+                raise ServiceError(f"No buildings found for {key} -- {reason}.")
             if sample_bldg_id is not None:
                 metadata = metadata[metadata["bldg_id"] == sample_bldg_id]
                 if metadata.empty:

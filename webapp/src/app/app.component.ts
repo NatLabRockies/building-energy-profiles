@@ -42,6 +42,7 @@ export class AppComponent {
   // Left-nav items, in display order.
   readonly navItems: NavItem[] = [
     { path: '/', label: 'Builder', icon: 'dashboard_customize', exact: true },
+    { path: '/select-buildings', label: 'Select Buildings', icon: 'other_houses' },
     { path: '/dashboard', label: 'Dashboard', icon: 'space_dashboard' },
     { path: '/timeseries', label: 'Time Series', icon: 'show_chart' },
     { path: '/measures', label: 'Measures', icon: 'checklist' },

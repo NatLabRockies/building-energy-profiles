@@ -20,9 +20,13 @@ from api.config import Settings
 from api.schemas import (
     AvailableCountiesResponse,
     AvailableStatesResponse,
+    BuildingDistributionRequest,
+    BuildingDistributionResponse,
     CompositeResolveRequest,
     CompositeResolveResponse,
     EnergyStarTypeInfo,
+    FilterOptionsRequest,
+    FilterOptionsResponse,
     MeasuresCompareRequest,
     MeasuresCompareResponse,
     MeasuresListResponse,
@@ -81,6 +85,25 @@ def post_composite_resolve(request: CompositeResolveRequest) -> CompositeResolve
     so every downstream page (Dashboard/Timeseries/Measures) uses the same building consistently instead of
     each independently guessing one."""
     return services.resolve_composite(request, settings)
+
+
+@app.post("/api/composite/building-distribution", response_model=BuildingDistributionResponse)
+def post_composite_building_distribution(request: BuildingDistributionRequest) -> BuildingDistributionResponse:
+    """For each composite component, compute a site-EUI distribution (histogram + smoothed density curve)
+    across every sampled building of that type in this state/county, plus percentile/mean markers -- lets
+    the frontend show a "PDF" chart and let a user pick a representative building either by clicking a
+    point on the curve or via a quick percentile/mean shortcut, instead of always defaulting to the first
+    building found (or the closest sqft match)."""
+    return services.get_building_distributions(request, settings)
+
+
+@app.post("/api/composite/filter-options", response_model=FilterOptionsResponse)
+def post_composite_filter_options(request: FilterOptionsRequest) -> FilterOptionsResponse:
+    """For each composite component, list curated metadata columns (vintage, HVAC type, stories, wall
+    construction, etc. -- see `services.CURATED_FILTER_COLUMNS`) with their distinct values/counts in the
+    current sample, so a caller can build a "narrow the population" filter UI without exposing all of
+    BuildStock's raw `in.*` columns (mostly identifiers or too granular to be a useful filter)."""
+    return services.get_filter_options(request, settings)
 
 
 @app.post("/api/metadata/summary", response_model=MetadataSummaryResponse)

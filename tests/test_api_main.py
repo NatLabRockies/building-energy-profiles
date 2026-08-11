@@ -35,6 +35,8 @@ class TestAppRoutes:
             "/api/health",
             "/api/energy-star-types",
             "/api/composite/resolve",
+            "/api/composite/building-distribution",
+            "/api/composite/filter-options",
             "/api/metadata/summary",
             "/api/timeseries/composite",
             "/api/measures",
@@ -114,6 +116,102 @@ class TestAppEndpointsIntegration:
         assert body["components"][0]["bldg_id"] == body["resolvable"][0]["bldg_id"]
 
     @pytest.mark.integration
+    def test_building_distribution_single_component(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/composite/building-distribution",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        assert len(body["distributions"]) == 1
+        distribution = body["distributions"][0]
+        assert distribution["building_type"] == "SmallOffice"
+        assert distribution["sample_size"] > 0
+        assert len(distribution["points"]) > 0
+        assert set(distribution["percentile_buildings"]) == {"p5", "p25", "median", "p75", "p95", "mean"}
+        # Points are sorted ascending by value -- percentile markers should follow the same order.
+        p5 = distribution["percentile_buildings"]["p5"]["value"]
+        p95 = distribution["percentile_buildings"]["p95"]["value"]
+        assert p5 <= p95
+
+    @pytest.mark.integration
+    def test_building_distribution_composite_mix(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/composite/building-distribution",
+            json={
+                "components": [
+                    {"product": "comstock", "building_type": "SmallOffice", "fraction": 0.7},
+                    {"product": "comstock", "building_type": "RetailStandalone", "fraction": 0.3},
+                ],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert {d["building_type"] for d in body["distributions"]} == {"SmallOffice", "RetailStandalone"}
+
+    @pytest.mark.integration
+    def test_filter_options_lists_curated_columns_with_value_counts(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/composite/filter-options",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["ok"] is True
+        component = body["components"][0]
+        assert component["building_type"] == "SmallOffice"
+        columns_by_name = {c["column"]: c for c in component["columns"]}
+        assert "in.vintage" in columns_by_name
+        assert columns_by_name["in.vintage"]["display_name"] == "Vintage"
+        assert len(columns_by_name["in.vintage"]["values"]) > 1
+        assert all(v["count"] > 0 for v in columns_by_name["in.vintage"]["values"])
+
+    @pytest.mark.integration
+    def test_building_distribution_respects_component_filters(self, client: TestClient) -> None:
+        # First, find a real vintage value actually present for this component.
+        filter_response = client.post(
+            "/api/composite/filter-options",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+            },
+        )
+        vintage_values = filter_response.json()["components"][0]["columns"]
+        vintage_column = next(c for c in vintage_values if c["column"] == "in.vintage")
+        one_vintage = vintage_column["values"][0]["value"]
+        expected_count = vintage_column["values"][0]["count"]
+
+        response = client.post(
+            "/api/composite/building-distribution",
+            json={
+                "components": [
+                    {
+                        "product": "comstock",
+                        "building_type": "SmallOffice",
+                        "fraction": 1.0,
+                        "filters": {"in.vintage": [one_vintage]},
+                    }
+                ],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        assert body["distributions"][0]["sample_size"] == expected_count
+
+    @pytest.mark.integration
     def test_metadata_summary_single_component(self, client: TestClient) -> None:
         response = client.post(
             "/api/metadata/summary",
@@ -130,6 +228,41 @@ class TestAppEndpointsIntegration:
         assert body["weighted_annual_site_energy_kwh"] > 0
         assert len(body["by_fuel"]) > 0
         assert len(body["by_end_use"]) > 0
+        # No bldg_id pinned -- selected-building fields stay unset/None.
+        assert body["components"][0]["selected_bldg_id"] is None
+        assert body["weighted_selected_building_site_eui_kbtu_per_ft2"] is None
+
+    @pytest.mark.integration
+    def test_metadata_summary_reports_selected_building_alongside_sample_average(self, client: TestClient) -> None:
+        # First, pull a real bldg_id from this component's own distribution so the pin is guaranteed valid.
+        distribution_response = client.post(
+            "/api/composite/building-distribution",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+            },
+        )
+        bldg_id = distribution_response.json()["distributions"][0]["percentile_buildings"]["p95"]["bldg_id"]
+
+        response = client.post(
+            "/api/metadata/summary",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0, "bldg_id": bldg_id}],
+                "state": "DE",
+            },
+        )
+
+        assert response.status_code == 200
+        body = response.json()
+        component = body["components"][0]
+        assert component["selected_bldg_id"] == bldg_id
+        assert component["selected_site_eui_kbtu_per_ft2"] is not None
+        # A single-component composite's selected-building weighted total should equal that one
+        # component's own selected EUI (nothing else to average against).
+        assert body["weighted_selected_building_site_eui_kbtu_per_ft2"] == pytest.approx(component["selected_site_eui_kbtu_per_ft2"])
+        # The population-average EUI should generally differ from one specific (here, high-percentile)
+        # building's own EUI -- this is the exact distinction the Dashboard needs to surface.
+        assert component["site_eui_kbtu_per_ft2"] != pytest.approx(component["selected_site_eui_kbtu_per_ft2"])
 
     @pytest.mark.integration
     def test_metadata_summary_composite_mix(self, client: TestClient) -> None:

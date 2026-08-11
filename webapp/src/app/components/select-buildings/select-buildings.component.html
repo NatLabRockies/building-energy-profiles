@@ -1,0 +1,116 @@
+<div class="page">
+  <h1>Select Representative Buildings</h1>
+  <p class="intro">
+    For each building type in your mix, the chart below shows the site EUI (energy per square foot)
+    distribution across every real sampled building of that type in your chosen location. Click a point on
+    the curve, or use a percentile/mean shortcut, to pin the specific building used for time-series-based
+    results (Time Series &amp; Modelica export) -- Dashboard/annual totals always reflect the full sample's
+    average regardless of this choice.
+  </p>
+
+  @if (loading()) {
+    <p>Loading building distributions&hellip;</p>
+  }
+  @if (errorMessage()) {
+    <p class="error">{{ errorMessage() }}</p>
+  }
+  @if (warnings().length > 0) {
+    <div class="warn">
+      @for (w of warnings(); track w) {
+        <p>&#9888;&#65039; {{ w }}</p>
+      }
+    </div>
+  }
+
+  @if (compositeViewModel(); as composite) {
+    <section class="distribution-box composite-box">
+      <h3>Composite Mix &mdash; Weighted Site EUI Distribution</h3>
+      <p class="composite-note">
+        The floor-area-weighted combination of every building type below, based on their mix percentages.
+        The dashed lines compare the composite's weighted EUI using the full sample average (what the
+        Dashboard reports) against using the buildings you've specifically selected.
+      </p>
+      <div class="chart-canvas-wrap">
+        <app-chart type="line" [data]="composite.chartData" [options]="composite.chartOptions"></app-chart>
+      </div>
+      <div class="composite-summary">
+        <div class="composite-stat">
+          <span class="dot sample-avg-dot"></span>
+          Weighted EUI (sample average): <strong>{{ composite.weightedSampleAverageEui != null ? (composite.weightedSampleAverageEui | number: '1.1-1') + ' kBtu/ft2/yr' : 'unavailable' }}</strong>
+        </div>
+        <div class="composite-stat">
+          <span class="dot selected-dot"></span>
+          Weighted EUI (selected buildings): <strong>{{ composite.weightedSelectedEui != null ? (composite.weightedSelectedEui | number: '1.1-1') + ' kBtu/ft2/yr' : 'select a building for every component to see this' }}</strong>
+        </div>
+      </div>
+    </section>
+  }
+
+  @for (vm of viewModels(); track vm.key) {
+    <section class="distribution-box">
+      <h3>
+        {{ vm.dist.label || vm.dist.building_type }} ({{ vm.dist.product }}) &mdash; {{ vm.dist.sample_size | number }} sampled buildings
+        @if (vm.appliedFilterCount > 0) {
+          <span class="filter-badge">{{ vm.appliedFilterCount }} filter{{ vm.appliedFilterCount > 1 ? 's' : '' }} applied</span>
+        }
+      </h3>
+      <p class="population-note">Population mean: {{ vm.dist.mean_value | number: '1.1-1' }} {{ vm.dist.unit }}</p>
+      <div class="chart-canvas-wrap">
+        <app-chart type="line" [data]="vm.chartData" [options]="vm.chartOptions"></app-chart>
+      </div>
+      <div class="percentile-actions">
+        @for (key of percentileKeys; track key) {
+          <button
+            type="button"
+            [class.active]="vm.selection?.bldgId === vm.dist.percentile_buildings[key]?.bldg_id"
+            (click)="selectPercentile(vm.dist, key)"
+          >
+            {{ percentileLabels[key] }}
+          </button>
+        }
+      </div>
+      @if (vm.selection) {
+        <p class="selection-summary">
+          Selected: <strong>bldg_id {{ vm.selection.bldgId }}</strong> &middot;
+          {{ vm.selection.value | number: '1.1-1' }} {{ vm.dist.unit }}
+        </p>
+      }
+
+      @if (vm.filterColumns.length > 0) {
+        <details class="filters-panel">
+          <summary>Narrow the population&hellip;</summary>
+          <div class="filter-columns">
+            @for (column of vm.filterColumns; track column.column) {
+              <label class="filter-column">
+                {{ column.display_name }}
+                <select multiple (change)="onFilterValueChange(vm.key, column.column, $event)">
+                  @for (v of column.values; track v.value) {
+                    <option [value]="v.value" [selected]="isDraftValueSelected(vm.key, column.column, v.value)">
+                      {{ v.value }} ({{ v.count }})
+                    </option>
+                  }
+                </select>
+              </label>
+            }
+          </div>
+          <div class="filter-actions">
+            <button type="button" [disabled]="vm.refreshing" (click)="applyFilters(vm.dist)">
+              {{ vm.refreshing ? 'Applying…' : 'Apply filters' }}
+            </button>
+            @if (vm.appliedFilterCount > 0) {
+              <button type="button" [disabled]="vm.refreshing" (click)="clearFilters(vm.dist)">Clear filters</button>
+            }
+          </div>
+          <p class="filters-hint">Hold Ctrl/Cmd to select multiple values within a column.</p>
+        </details>
+      }
+    </section>
+  }
+
+  @if (!loading()) {
+    <div class="row-actions">
+      <button type="button" (click)="skip()">Skip &mdash; use defaults</button>
+      <button type="button" class="primary" (click)="continueToDashboard()">Continue to dashboard &rarr;</button>
+    </div>
+  }
+</div>

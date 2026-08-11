@@ -15,6 +15,7 @@ cache
 dist
 test_output.ipynb
 test_output.html
+scripts
 
 # don't save any of the large files
 source_files/*.pbf

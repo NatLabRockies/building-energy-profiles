@@ -14,6 +14,7 @@ from api.config import Settings
 from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyStarComponentIn
 from api.services import (
     ServiceError,
+    _apply_component_filters,
     _find_column,
     _frame_to_records,
     _resample_hourly,
@@ -223,6 +224,63 @@ class TestFindColumn:
     def test_returns_none_when_not_found(self):
         columns = pd.Index(["bldg_id"])
         assert _find_column(columns, "out.does_not_exist") is None
+
+
+class TestApplyComponentFilters:
+    """Test cases for _apply_component_filters() -- narrowing a component's metadata population by
+    curated categorical columns (e.g. vintage, HVAC system type) before computing a distribution/summary.
+    """
+
+    def _frame(self) -> pd.DataFrame:
+        return pd.DataFrame(
+            {
+                "bldg_id": [1, 2, 3, 4],
+                "in.vintage": ["1980 to 1989", "1980 to 1989", "2000 to 2012", "2000 to 2012"],
+                "in.heating_fuel": ["Electricity", "NaturalGas", "Electricity", "NaturalGas"],
+            }
+        )
+
+    @pytest.mark.unit
+    def test_no_filters_returns_frame_unchanged(self):
+        frame = self._frame()
+        result = _apply_component_filters(frame, None)
+        assert len(result) == len(frame)
+
+    @pytest.mark.unit
+    def test_single_column_filter_keeps_matching_rows_only(self):
+        result = _apply_component_filters(self._frame(), {"in.vintage": ["1980 to 1989"]})
+        assert sorted(result["bldg_id"].tolist()) == [1, 2]
+
+    @pytest.mark.unit
+    def test_multiple_values_in_one_column_are_ored(self):
+        result = _apply_component_filters(self._frame(), {"in.vintage": ["1980 to 1989", "2000 to 2012"]})
+        assert len(result) == 4
+
+    @pytest.mark.unit
+    def test_multiple_columns_are_anded(self):
+        result = _apply_component_filters(self._frame(), {"in.vintage": ["1980 to 1989"], "in.heating_fuel": ["Electricity"]})
+        assert result["bldg_id"].tolist() == [1]
+
+    @pytest.mark.unit
+    def test_unknown_column_is_silently_ignored(self):
+        result = _apply_component_filters(self._frame(), {"in.does_not_exist": ["whatever"]})
+        assert len(result) == 4
+
+    @pytest.mark.unit
+    def test_empty_allowed_values_list_is_ignored(self):
+        result = _apply_component_filters(self._frame(), {"in.vintage": []})
+        assert len(result) == 4
+
+    @pytest.mark.unit
+    def test_tolerates_unit_suffixed_column_name(self):
+        frame = self._frame().rename(columns={"in.vintage": "in.vintage..yr"})
+        result = _apply_component_filters(frame, {"in.vintage": ["1980 to 1989"]})
+        assert sorted(result["bldg_id"].tolist()) == [1, 2]
+
+    @pytest.mark.unit
+    def test_filter_excluding_everyone_returns_empty_frame(self):
+        result = _apply_component_filters(self._frame(), {"in.vintage": ["Before 1946"]})
+        assert result.empty
 
 
 class TestSqftBoundsWarning:

@@ -50,6 +50,10 @@ export interface CompositeComponentSpec {
    * own default. */
   bldg_id?: number | null;
   label?: string | null;
+  /** Optional `{"in.<column>": [allowed values]}` filters narrowing this component's sampled population
+   * (OR within a column, AND across columns). Applied by the building-distribution, metadata-summary, and
+   * single-component time-series endpoints. */
+  filters?: Record<string, string[]> | null;
 }
 
 export interface CompositeResolveResponse {
@@ -79,9 +83,16 @@ export interface ComponentSummary {
   label: string | null;
   fraction: number;
   building_count: number;
+  /** Population-average figures across all `building_count` sampled buildings -- distinct from the
+   * `selected_*` fields below, which describe one specific pinned building. */
   avg_sqft: number;
   annual_site_energy_kwh: number;
   site_eui_kbtu_per_ft2: number;
+  /** The specific building pinned for this component (e.g. via the Select Buildings page), if any. */
+  selected_bldg_id?: number | null;
+  selected_sqft?: number | null;
+  selected_annual_site_energy_kwh?: number | null;
+  selected_site_eui_kbtu_per_ft2?: number | null;
 }
 
 export interface EndUseValue {
@@ -97,7 +108,13 @@ export interface MetadataSummaryResponse {
   weighted_building_count: number;
   weighted_avg_sqft: number;
   weighted_annual_site_energy_kwh: number;
+  /** The composite's fraction-weighted site EUI using each component's *population average* -- not tied
+   * to any specific pinned building. */
   weighted_site_eui_kbtu_per_ft2: number;
+  /** The composite's fraction-weighted site EUI using each component's specifically *pinned* building
+   * instead of its population average -- `null` unless every component has a resolvable pinned building. */
+  weighted_selected_building_annual_site_energy_kwh?: number | null;
+  weighted_selected_building_site_eui_kbtu_per_ft2?: number | null;
   by_fuel: EndUseValue[];
   by_end_use: EndUseValue[];
   cache_dir: string;
@@ -105,6 +122,7 @@ export interface MetadataSummaryResponse {
    * the sampled BuildStock buildings for a component. */
   warnings: string[];
 }
+
 
 export interface TimeseriesRequest extends CompositeRequestBase {
   columns?: string[] | null;
@@ -188,11 +206,97 @@ export interface MosExportRequest extends CompositeRequestBase {
   cooling_columns?: string[] | null;
 }
 
+export interface DistributionPoint {
+  bldg_id: number;
+  value: number;
+  percentile_rank: number;
+  sqft?: number | null;
+  annual_site_energy_kwh?: number | null;
+}
+
+/** Quick-select shortcut keys on ComponentDistribution.percentile_buildings. */
+export const PERCENTILE_KEYS = ['p5', 'p25', 'median', 'mean', 'p75', 'p95'] as const;
+export type PercentileKey = (typeof PERCENTILE_KEYS)[number];
+
+export const PERCENTILE_LABELS: Record<PercentileKey, string> = {
+  p5: '5th percentile',
+  p25: '25th percentile',
+  median: 'Median',
+  mean: 'Mean',
+  p75: '75th percentile',
+  p95: '95th percentile',
+};
+
+export interface ComponentDistribution {
+  product: Product;
+  building_type: string;
+  label: string | null;
+  metric: string;
+  unit: string;
+  sample_size: number;
+  mean_value: number;
+  /** Every (possibly downsampled) building in the sample, sorted ascending by `value`. */
+  points: DistributionPoint[];
+  histogram_bin_edges: number[];
+  histogram_counts: number[];
+  histogram_density: number[];
+  /** Smoothed density curve (x, y) -- empty for a degenerate sample. */
+  kde_x: number[];
+  kde_y: number[];
+  percentile_buildings: Record<PercentileKey, DistributionPoint>;
+}
+
+export interface BuildingDistributionRequest extends CompositeRequestBase {
+  metric?: 'site_eui';
+  bins?: number;
+}
+
+export interface BuildingDistributionResponse {
+  ok: boolean;
+  state: string;
+  distributions: ComponentDistribution[];
+  warnings: string[];
+}
+
+export interface FilterValueCount {
+  value: string;
+  count: number;
+}
+
+export interface FilterColumnOptions {
+  /** Raw metadata column name (e.g. "in.vintage") -- pass this back as a key in
+   * CompositeComponentSpec.filters to narrow the population by it. */
+  column: string;
+  display_name: string;
+  values: FilterValueCount[];
+}
+
+export interface ComponentFilterOptions {
+  product: Product;
+  building_type: string;
+  label: string | null;
+  columns: FilterColumnOptions[];
+}
+
+export type FilterOptionsRequest = CompositeRequestBase;
+
+export interface FilterOptionsResponse {
+  ok: boolean;
+  components: ComponentFilterOptions[];
+  warnings: string[];
+}
+
 export interface ApiErrorResponse {
   ok: false;
   error_type: string;
   error: string;
 }
+
+/** Site energy (kWh) -> site EUI (kBtu/ft2) unit conversion, mirroring api/services.py's KWH_TO_KBTU --
+ * kept in sync so a client-side weighted-EUI calculation (e.g. the Select Buildings page's composite
+ * mixture panel) matches the backend's `weighted_site_eui_kbtu_per_ft2`/`weighted_selected_building_
+ * site_eui_kbtu_per_ft2` exactly, not just approximately. */
+export const KWH_TO_KBTU = 3.412141633;
 
 /** Common annual "total" energy columns shared by ComStock and ResStock, mirroring
  * api/services.py's DEFAULT_METRIC_COLUMNS. Used as chart series defaults in the UI. */
