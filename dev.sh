@@ -23,7 +23,18 @@ uv run --group api uvicorn api.main:app --reload --port 8000 &
 API_PID=$!
 
 echo "Starting Angular frontend on http://localhost:4200 ..."
-(cd webapp && npm start) &
+(
+    cd webapp
+    # Use the Node version pinned in webapp/.nvmrc if nvm is available, so the
+    # correct Angular CLI-compatible runtime is used regardless of the shell's
+    # default/active Node version.
+    if [[ -s "${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]]; then
+        # shellcheck disable=SC1091
+        source "${NVM_DIR:-$HOME/.nvm}/nvm.sh"
+        nvm use --silent >/dev/null || nvm install >/dev/null
+    fi
+    pnpm start
+) &
 WEB_PID=$!
 
 wait "$API_PID" "$WEB_PID"

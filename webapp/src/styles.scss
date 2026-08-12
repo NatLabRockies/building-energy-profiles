@@ -5,9 +5,14 @@
 // custom components at https://material.angular.dev/guide/theming
 @use '@angular/material' as mat;
 
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+// Angular Material ships its own base reset + typography. Tailwind's preflight would fight
+// with Material component internals (mat-mdc-*), so it's intentionally excluded here --
+// Tailwind is used purely for layout/spacing/utility classes alongside Material components.
+@layer theme, base, components, utilities;
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@source './**/*.{html,ts}';
+@custom-variant dark (&:where(.dark, .dark *));
 
 html {
   height: 100%;
