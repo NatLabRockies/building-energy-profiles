@@ -79,12 +79,20 @@
       "Sample avg" columns are averaged across every building sampled for that type/location -- "Selected
       bldg" columns are the one specific building pinned on the
       <a routerLink="/select-buildings">Select Buildings</a> page, if any.
+      @if (hasUnitMultipliers()) {
+        Because this composite mixes ComStock (whole-building) and/or sqft-targeted components, "Units
+        represented" shows how many of each component's representative building/dwelling unit its floor-area
+        share works out to -- e.g. a multifamily component's apartment count.
+      }
     </p>
     <table>
       <thead>
         <tr>
           <th>Building type</th>
           <th>Fraction</th>
+          @if (hasUnitMultipliers()) {
+            <th>Units represented</th>
+          }
           <th>Buildings sampled</th>
           <th>Sample avg. sqft</th>
           <th>Sample avg. Site EUI (kBtu/ft&sup2;)</th>
@@ -98,6 +106,15 @@
           <tr>
             <td>{{ c.label || c.building_type }} ({{ c.product }})</td>
             <td>{{ (c.fraction * 100).toFixed(0) }}%</td>
+            @if (hasUnitMultipliers()) {
+              <td>
+                @if (c.unit_multiplier != null) {
+                  {{ c.unit_multiplier | number: '1.1-1' }} {{ c.product === 'resstock' ? 'unit(s)' : 'building(s)' }}
+                } @else {
+                  &mdash;
+                }
+              </td>
+            }
             <td>{{ c.building_count | number }}</td>
             <td>{{ c.avg_sqft | number: '1.0-0' }}</td>
             <td>{{ c.site_eui_kbtu_per_ft2 | number: '1.1-1' }}</td>

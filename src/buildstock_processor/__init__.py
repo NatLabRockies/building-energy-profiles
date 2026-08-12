@@ -15,6 +15,7 @@ from .composite import (
     find_nearest_sqft_bldg_id,
     normalize_time_series_columns,
     pull_composite_time_series,
+    resolve_fraction_weights,
 )
 from .composite_metadata import (
     ComponentMetadataSummary,
@@ -90,6 +91,7 @@ __all__ = [
     "map_energy_star_property_type",
     "normalize_time_series_columns",
     "pull_composite_time_series",
+    "resolve_fraction_weights",
     "result_variables_from_columns",
     "select_building_condition_sample",
     "summarize_composite_metadata",

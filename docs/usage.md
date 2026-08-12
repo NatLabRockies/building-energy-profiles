@@ -331,6 +331,27 @@ mixed_use = CompositeBuildingType.from_fractions(
 )
 ```
 
+A ResStock row is a single dwelling unit, not a whole building, so mixing products can't be a bare
+fraction-weighted blend -- half of a 50,000 sqft office next to half of a 900 sqft apartment would put
+almost no multifamily in the result. Composites that mix ComStock and ResStock are therefore sized by floor
+area automatically: the composite's gross floor area is anchored on the ComStock component(s) (or given
+explicitly via `total_sqft`), each component takes `fraction * total_sqft` of it, and its weight is that
+area divided by its own representative size -- which for a ResStock component is a dwelling-unit multiplier.
+"50% MediumOffice + 50% Multi-Family with 5+ Units", with a 50,000 sqft office, means 25,000 sqft of
+apartments, i.e. ~28 units of ~900 sqft each.
+
+```python
+combined, components = pull_composite_time_series(
+    mixed_use,
+    save_dir=composite_dir,
+    state="DE",
+    total_sqft=120_000,  # optional: size the whole building explicitly instead of inferring it
+)
+```
+
+`summarize_composite_metadata()` reports each component's resulting `unit_multiplier` (the number of
+representative buildings/dwelling units its floor area works out to) alongside its scaled annual energy.
+
 If you already downloaded component time series yourself (e.g. for specific hand-picked buildings), skip
 the download step and call `combine_composite_time_series()` directly with a
 `{(product, building_type): DataFrame}` mapping. If fractions don't sum to exactly 1.0 (e.g. percentages

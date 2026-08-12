@@ -28,6 +28,18 @@ precomputed `weights` to `combine_composite_time_series()` directly) instead: ea
 `target_sqft / representative_building_sqft` rather than by its bare `fraction`, so the combined result
 represents an actual building of that square footage rather than a floor-area-agnostic share.
 
+Mixing ResStock with ComStock needs one extra correction, because the two products' rows aren't the same
+kind of thing: a ComStock row is a whole building, while a ResStock row is a *single dwelling unit* (see
+`resstock.py`). Blending "50% MediumOffice + 50% Multi-Family with 5+ Units" by bare fractions therefore
+puts half of a ~50,000 sqft office next to half of a ~900 sqft apartment, and the multifamily side comes out
+far too small. `resolve_fraction_weights()` fixes this by turning each component's floor-area share into a
+*count* of its representative building/unit: the composite's implied gross floor area is anchored on its
+whole-building (ComStock) components (or given explicitly via `total_sqft`), each component's floor area is
+`fraction * total_sqft`, and its weight is that area divided by its own representative floor area -- which,
+for a ResStock component, is exactly the dwelling-unit multiplier ("50% of 50,000 sqft / 900 sqft per unit
+= ~28 apartments"). `pull_composite_time_series()` and `summarize_composite_metadata()` apply this
+automatically to any composite that mixes products.
+
 ComStock and ResStock publish the same per-building time series layout (15-minute intervals, aligned to the
 same AMY2018-based calendar for the currently supported releases) but use different unit-suffix conventions
 on column names (e.g. ResStock's `out.electricity.total.energy_consumption..kwh` vs. ComStock's
@@ -177,6 +189,82 @@ def find_nearest_sqft_bldg_id(
     return int(metadata.loc[nearest_index, bldg_id_column])
 
 
+def is_dwelling_unit_product(product: str) -> bool:
+    """True for products whose metadata rows are individual dwelling units rather than whole buildings.
+
+    ResStock simulates one housing unit per row (an apartment within a multifamily building, or a whole
+    single-family home), so its floor area is a *per-unit* area that has to be multiplied up to a building
+    -- see `resolve_fraction_weights()`.
+    """
+    return product.strip().lower() == "resstock"
+
+
+def average_sqft(metadata: pd.DataFrame, sqft_column: str | None = None) -> float | None:
+    """Return the mean floor area of `metadata`'s buildings/dwelling units, or `None` if unavailable."""
+    resolved_column = sqft_column or next((c for c in metadata.columns if c.startswith("in.sqft")), None)
+    if resolved_column is None or metadata.empty:
+        return None
+    mean_sqft = pd.to_numeric(metadata[resolved_column], errors="coerce").mean()
+    return None if pd.isna(mean_sqft) else float(mean_sqft)
+
+
+def resolve_fraction_weights(
+    composite: CompositeBuildingType,
+    component_sqft: Mapping[tuple[str, str], float],
+    total_sqft: float | None = None,
+) -> dict[tuple[str, str], float] | None:
+    """Convert a composite's floor-area `fraction`s into per-component multipliers of each component's own
+    representative building/dwelling unit -- the correction that makes a ResStock component's contribution
+    a realistic *unit count* instead of a fraction of one apartment (see module docstring).
+
+    `component_sqft` is each component's representative floor area (`{(product, building_type): sqft}`) --
+    the whole-building area for a ComStock component, the per-dwelling-unit area for a ResStock one.
+
+    The composite's gross floor area is `total_sqft` if given, else inferred from the whole-building
+    (ComStock) components alone: `sum(fraction * sqft) / sum(fraction)` over those components, i.e. "the
+    office is 50% of the building, and the office we're modeling is 50,000 sqft, so the whole building is
+    100,000 sqft". Each component's weight is then `fraction * total_sqft / component_sqft[key]`.
+
+    Returns `None` when no correction applies and bare `fraction`s should be used as-is: `total_sqft`
+    wasn't given and the composite either has no dwelling-unit component (every component is already the
+    same kind of whole building) or has no whole-building component to anchor a total floor area on (e.g. an
+    all-ResStock composite, where the per-unit blend is already self-consistent).
+    """
+    composite.assert_normalized()
+    return resolve_fraction_weights_for(
+        {component.key: component.fraction for component in composite.components}, component_sqft, total_sqft
+    )
+
+
+def resolve_fraction_weights_for(
+    fractions: Mapping[tuple[str, str], float],
+    component_sqft: Mapping[tuple[str, str], float],
+    total_sqft: float | None = None,
+) -> dict[tuple[str, str], float] | None:
+    """`resolve_fraction_weights()` over a bare `{(product, building_type): fraction}` mapping, for callers
+    (e.g. the API layer) that don't build a `CompositeBuildingType`. Fractions are assumed normalized.
+    """
+    if total_sqft is None:
+        if not any(is_dwelling_unit_product(product) for product, _building_type in fractions):
+            return None
+        anchors = {key: fraction for key, fraction in fractions.items() if not is_dwelling_unit_product(key[0]) and component_sqft.get(key)}
+        anchor_fraction = sum(anchors.values())
+        if not anchor_fraction:
+            return None
+        total_sqft = sum(fraction * component_sqft[key] for key, fraction in anchors.items()) / anchor_fraction
+
+    if total_sqft <= 0:
+        raise ValueError(f"Composite total_sqft must be > 0, got {total_sqft}")
+
+    weights: dict[tuple[str, str], float] = {}
+    for key, fraction in fractions.items():
+        sqft = component_sqft.get(key)
+        if not sqft:
+            raise ValueError(f"Could not determine floor area for composite component {key} to size it against total_sqft.")
+        weights[key] = fraction * total_sqft / sqft
+    return weights
+
+
 def normalize_time_series_columns(data_frame: pd.DataFrame) -> pd.DataFrame:
     """Strip trailing "..<unit>" suffixes (e.g. "..kwh", "..kwh_per_ft2") from column names.
 
@@ -221,7 +309,8 @@ def combine_composite_time_series(
 
     Returns a DataFrame with `timestamp_column` plus one combined column per resolved value column, where
     `composite[column][t] = sum(weight * component_series[column][t] for component in composite)` (`weight`
-    being `weights[component.key]` if given, else `component.fraction`).
+    being `weights[component.key]` if given, else `component.fraction`). The multiplier actually applied to
+    each component is recorded in the result's `.attrs["component_weights"]`.
     """
     required_keys = [component.key for component in composite.components]
     if weights is not None:
@@ -265,16 +354,20 @@ def combine_composite_time_series(
         raise ValueError(f"Component time series for composite '{composite.name}' share no common timestamps to combine.")
 
     combined = pd.DataFrame(index=shared_index)
+    applied_weights = {
+        component.key: (weights[component.key] if weights is not None else component.fraction) for component in composite.components
+    }
     for column in value_columns:
         total = pd.Series(0.0, index=shared_index)
         for component in composite.components:
             frame = normalized_frames[component.key]
-            multiplier = weights[component.key] if weights is not None else component.fraction
-            total = total + multiplier * frame.loc[shared_index, column].astype(float)
+            total = total + applied_weights[component.key] * frame.loc[shared_index, column].astype(float)
         combined[column] = total
 
     combined.index.name = timestamp_column
-    return combined.reset_index()
+    combined = combined.reset_index()
+    combined.attrs["component_weights"] = applied_weights
+    return combined
 
 
 def pull_composite_time_series(
@@ -289,6 +382,7 @@ def pull_composite_time_series(
     max_sqft: float | None = None,
     value_columns: list[str] | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
+    total_sqft: float | None = None,
     upgrade_by_component: Mapping[tuple[str, str], str] | None = None,
     building_condition: Mapping[tuple[str, str], float] | None = None,
     building_condition_band: float = BUILDING_CONDITION_DEFAULT_BAND,
@@ -329,6 +423,16 @@ def pull_composite_time_series(
             `combine_composite_time_series()` as `weights` (so `composite`'s fractions don't need to sum to
             1.0 in this mode -- they're ignored in favor of `target_sqft`). When given together with
             `bldg_ids`, metadata is still fetched (filtered to that `bldg_id`) purely to read its floor area.
+        total_sqft: optional gross floor area of the whole composite building, in `fraction` mode (i.e.
+            without `target_sqft`). Each component is then sized to `fraction * total_sqft` and weighted by
+            that area divided by its own representative floor area -- so a ResStock component becomes a
+            realistic dwelling-unit count instead of a fraction of one apartment. A composite that mixes
+            ComStock and ResStock components gets this treatment automatically even without `total_sqft`,
+            anchoring the total on its ComStock components' representative sizes (see
+            `resolve_fraction_weights()`); in that case each component with no `bldg_ids`/
+            `building_condition` override is represented by the sampled building closest to its type's
+            average floor area, so the inferred total isn't at the mercy of whichever building came back
+            first.
         upgrade_by_component: optional `{(product, building_type): upgrade_id}` per-component override --
             each component uses its own entry here instead of the shared `upgrade` if present. Useful for
             isolating a single measure's effect to just the component(s) it actually applies to (e.g. a
@@ -345,10 +449,17 @@ def pull_composite_time_series(
 
     Returns:
         A tuple of `(combined_composite_time_series, {component.key: component_time_series})` so callers can
-        inspect both the blended result and each underlying component's own profile.
+        inspect both the blended result and each underlying component's own profile. The multiplier applied
+        to each component (e.g. a ResStock component's dwelling-unit count) is recorded in the combined
+        frame's `.attrs["component_weights"]`.
     """
     component_time_series: dict[tuple[str, str], pd.DataFrame] = {}
     component_scale: dict[tuple[str, str], float] = {}
+    component_sqft: dict[tuple[str, str], float] = {}
+    # A mixed-product composite needs each component's floor area even in fraction mode, to turn a
+    # dwelling-unit component's floor-area share into a unit count -- see resolve_fraction_weights().
+    mixes_products = len({component.key[0] for component in composite.components}) > 1
+    needs_sqft = target_sqft is not None or total_sqft is not None or mixes_products
     for component in composite.components:
         processor_cls: type[BuildStockProcessor] = (
             ComStockProcessor if component.product.strip().lower() == "comstock" else ResStockProcessor
@@ -373,12 +484,13 @@ def pull_composite_time_series(
         bldg_id = (bldg_ids or {}).get(component.key)
         percentile = None if bldg_id is not None else (building_condition or {}).get(component.key)
         sample_sqft: float | None = None
-        if bldg_id is not None and target_sqft is None:
+        if bldg_id is not None and not needs_sqft:
             sample = pd.DataFrame({"bldg_id": [bldg_id], "in.state": [state]})
         else:
             metadata = processor.process_metadata(save_dir=processor.base_dir)
             if metadata.empty:
                 raise ValueError(f"No buildings found for composite component {component.key} in state={state!r}.")
+            sqft_column = next((c for c in metadata.columns if c.startswith("in.sqft")), None) if needs_sqft else None
             if bldg_id is not None:
                 metadata = metadata[metadata["bldg_id"] == bldg_id]
                 if metadata.empty:
@@ -386,16 +498,27 @@ def pull_composite_time_series(
             elif percentile is not None:
                 selection = select_building_condition_sample(metadata, percentile=percentile, band=building_condition_band)
                 metadata = metadata[metadata["bldg_id"] == selection.median_bldg_id]
-            elif target_sqft is not None and component.key in target_sqft:
-                # Pick a real building already close in size to the target, rather than an arbitrary
-                # "first found" one that then gets linearly rescaled -- see find_nearest_sqft_bldg_id().
-                nearest_bldg_id = find_nearest_sqft_bldg_id(metadata, target_sqft[component.key])
-                metadata = metadata[metadata["bldg_id"] == nearest_bldg_id]
-            sqft_column = next((c for c in metadata.columns if c.startswith("in.sqft")), None) if target_sqft is not None else None
+            elif needs_sqft:
+                # Match a real building close to the size being modeled, rather than an arbitrary "first
+                # found" one that then gets linearly rescaled -- see find_nearest_sqft_bldg_id(). The
+                # yardstick is `target_sqft` for a whole-building component sized to an absolute area, and
+                # otherwise the sample's own average size: a dwelling-unit component is always sized in
+                # units (its target is a whole component's floor area, not one apartment's), and in
+                # fraction mode the composite's implied floor area is *derived* from its components, so
+                # anchoring it on a typical building beats anchoring it on whichever one came back first.
+                match_sqft = (
+                    target_sqft[component.key]
+                    if target_sqft is not None and component.key in target_sqft and not is_dwelling_unit_product(component.product)
+                    else average_sqft(metadata, sqft_column)
+                )
+                if match_sqft:
+                    nearest_bldg_id = find_nearest_sqft_bldg_id(metadata, match_sqft, sqft_column=sqft_column)
+                    metadata = metadata[metadata["bldg_id"] == nearest_bldg_id]
             select_columns = ["bldg_id", "in.state"] + ([sqft_column] if sqft_column else [])
             sample = metadata[select_columns].head(1)
             if sqft_column:
                 sample_sqft = float(sample[sqft_column].iloc[0])
+                component_sqft[component.key] = sample_sqft
 
         if target_sqft is not None:
             if component.key not in target_sqft:
@@ -411,6 +534,9 @@ def pull_composite_time_series(
             raise ValueError(f"Failed to download time series for composite component {component.key}.")
         component_time_series[component.key] = pd.read_parquet(paths[0])
 
-    weights = component_scale if target_sqft is not None else None
+    if target_sqft is not None:
+        weights: dict[tuple[str, str], float] | None = component_scale
+    else:
+        weights = resolve_fraction_weights(composite, component_sqft, total_sqft) if needs_sqft else None
     combined = combine_composite_time_series(composite, component_time_series, value_columns=value_columns, weights=weights)
     return combined, component_time_series
