@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 import api.main as main_module
 from api.config import Settings
 from api.main import app
-from buildstock_processor.comstock import ComStockProcessor
+from building_energy_profiles.comstock import ComStockProcessor
 
 
 @pytest.fixture

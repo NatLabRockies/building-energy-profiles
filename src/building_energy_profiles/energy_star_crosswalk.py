@@ -6,7 +6,7 @@ DOE's commercial prototype building models (ComStock, 15 types) and simplified r
 categories (ResStock, 5 types). Several ENERGY STAR property types have no close BuildStock equivalent at
 all (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures).
 
-This crosswalk is a best-effort approximation authored for buildstock_processor -- it is not an official
+This crosswalk is a best-effort approximation authored for building_energy_profiles -- it is not an official
 NLR or EPA publication. Each entry records a `match_quality` ("exact", "approximate", or "unmapped") and
 `notes` explaining the reasoning, so callers can decide whether an approximate match is good enough for
 their use case. The dictionary is stored as plain JSON alongside this module so tools can parse it without
@@ -41,7 +41,7 @@ class EnergyStarMapping:
 
 @cache
 def _raw_energy_star_crosswalk() -> tuple[Mapping[str, Any], ...]:
-    data_path = resources.files("buildstock_processor").joinpath("energy_star_crosswalk.json")
+    data_path = resources.files("building_energy_profiles").joinpath("energy_star_crosswalk.json")
     with data_path.open(encoding="utf-8") as file:
         loaded: list[dict[str, Any]] = json.load(file)
     return tuple(loaded)

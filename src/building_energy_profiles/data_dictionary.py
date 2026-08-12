@@ -121,7 +121,7 @@ def result_variables_from_columns(columns: Iterable[str]) -> tuple[ResultVariabl
 
 @cache
 def _raw_data_dictionary() -> Mapping[str, Any]:
-    data_path = resources.files("buildstock_processor").joinpath("data_dictionary.json")
+    data_path = resources.files("building_energy_profiles").joinpath("data_dictionary.json")
     with data_path.open(encoding="utf-8") as file:
         loaded: dict[str, Any] = json.load(file)
     return MappingProxyType(loaded)

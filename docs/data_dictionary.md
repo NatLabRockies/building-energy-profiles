@@ -1,6 +1,6 @@
 # BuildStock Data Dictionary
 
-This file mirrors `src/buildstock_processor/data_dictionary.json` in a Markdown format that is easy for people and simple tools to parse. The Python API exposes the same data through `BuildStock`, `ComStockProcessor.data_dictionary`, and `ResStockProcessor.data_dictionary`.
+This file mirrors `src/building_energy_profiles/data_dictionary.json` in a Markdown format that is easy for people and simple tools to parse. The Python API exposes the same data through `BuildStock`, `ComStockProcessor.data_dictionary`, and `ResStockProcessor.data_dictionary`.
 
 Result-variable lists are annual metadata output columns from the current default supported releases: ComStock
 `release_3` at `2025/comstock_amy2018_release_3/` and ResStock `release_1` with `weather_year="amy2018"` at

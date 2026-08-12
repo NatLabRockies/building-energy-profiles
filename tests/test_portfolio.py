@@ -12,9 +12,9 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from buildstock_processor import ComStockProcessor, ResStockProcessor
-from buildstock_processor._base import BuildStockProcessor
-from buildstock_processor.portfolio import (
+from building_energy_profiles import ComStockProcessor, ResStockProcessor
+from building_energy_profiles._base import BuildStockProcessor
+from building_energy_profiles.portfolio import (
     PortfolioComponent,
     estimate_portfolio_energy,
 )

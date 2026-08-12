@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 import numpy as np
 import pandas as pd
 
-from buildstock_processor.building_condition import KWH_TO_KBTU
+from building_energy_profiles.building_condition import KWH_TO_KBTU
 
 DEFAULT_ENERGY_COLUMN = "out.site_energy.total.energy_consumption"
 DEFAULT_BINS = 30

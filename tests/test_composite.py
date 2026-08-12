@@ -10,15 +10,15 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor import (
+from building_energy_profiles import (
     CompositeBuildingType,
     CompositeComponent,
     combine_composite_time_series,
     find_nearest_sqft_bldg_id,
     pull_composite_time_series,
 )
-from buildstock_processor._base import BuildStockProcessor
-from buildstock_processor.comstock import ComStockProcessor
+from building_energy_profiles._base import BuildStockProcessor
+from building_energy_profiles.comstock import ComStockProcessor
 
 
 def _make_time_series(timestamps: pd.DatetimeIndex, value: float, column: str = "out.electricity.total.energy_consumption") -> pd.DataFrame:

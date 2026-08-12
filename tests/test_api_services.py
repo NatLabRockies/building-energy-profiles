@@ -9,7 +9,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import buildstock_processor.location as location_module
+import building_energy_profiles.location as location_module
 from api.config import Settings
 from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyStarComponentIn
 from api.services import (
