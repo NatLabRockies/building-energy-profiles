@@ -6,9 +6,13 @@ import { environment } from '../../environments/environment';
 import {
   AvailableCountiesResponse,
   AvailableStatesResponse,
+  BuildingDistributionRequest,
+  BuildingDistributionResponse,
   CompositeResolveRequest,
   CompositeResolveResponse,
   EnergyStarTypeInfo,
+  FilterOptionsRequest,
+  FilterOptionsResponse,
   MeasuresCompareRequest,
   MeasuresCompareResponse,
   MeasuresListResponse,
@@ -33,6 +37,14 @@ export class ApiService {
 
   resolveComposite(request: CompositeResolveRequest): Observable<CompositeResolveResponse> {
     return this.http.post<CompositeResolveResponse>(`${this.baseUrl}/composite/resolve`, request);
+  }
+
+  getBuildingDistributions(request: BuildingDistributionRequest): Observable<BuildingDistributionResponse> {
+    return this.http.post<BuildingDistributionResponse>(`${this.baseUrl}/composite/building-distribution`, request);
+  }
+
+  getFilterOptions(request: FilterOptionsRequest): Observable<FilterOptionsResponse> {
+    return this.http.post<FilterOptionsResponse>(`${this.baseUrl}/composite/filter-options`, request);
   }
 
   getMetadataSummary(request: MetadataSummaryRequest): Observable<MetadataSummaryResponse> {

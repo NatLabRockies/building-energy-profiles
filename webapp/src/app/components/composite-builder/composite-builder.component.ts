@@ -257,7 +257,7 @@ export class CompositeBuilderComponent implements OnInit {
       });
   }
 
-  continueToDashboard(): void {
+  continueToBuildingSelection(): void {
     const result = this.resolveResult();
     if (!result || result.resolvable.length === 0) {
       return;
@@ -268,6 +268,6 @@ export class CompositeBuilderComponent implements OnInit {
       this.form.get('countyName')!.value || 'All',
       '0', // Always baseline -- the builder page no longer exposes an upgrade/measure ID selector.
     );
-    this.router.navigate(['/dashboard']);
+    this.router.navigate(['/select-buildings']);
   }
 }

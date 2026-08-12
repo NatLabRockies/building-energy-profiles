@@ -30,9 +30,17 @@
 
     <div class="cards">
       <div class="card">
-        <div class="card-label">Weighted Site EUI</div>
+        <div class="card-label">Weighted Site EUI &mdash; Sample Average</div>
         <div class="card-value">{{ s.weighted_site_eui_kbtu_per_ft2 | number: '1.1-1' }}<span class="card-unit">kBtu/ft²</span></div>
+        <div class="card-note">Averaged across every sampled building of each type (see "Buildings sampled" below) -- not tied to any pinned building.</div>
       </div>
+      @if (s.weighted_selected_building_site_eui_kbtu_per_ft2 != null) {
+        <div class="card">
+          <div class="card-label">Weighted Site EUI &mdash; Selected Buildings</div>
+          <div class="card-value">{{ s.weighted_selected_building_site_eui_kbtu_per_ft2 | number: '1.1-1' }}<span class="card-unit">kBtu/ft²</span></div>
+          <div class="card-note">Using the specific building pinned per component on the Select Buildings page.</div>
+        </div>
+      }
       <div class="card">
         <div class="card-label">Annual Site Energy</div>
         <div class="card-value">{{ s.weighted_annual_site_energy_kwh | number: '1.0-0' }}<span class="card-unit">kWh</span></div>
@@ -67,15 +75,22 @@
     </div>
 
     <h2>Components</h2>
+    <p class="intro">
+      "Sample avg" columns are averaged across every building sampled for that type/location -- "Selected
+      bldg" columns are the one specific building pinned on the
+      <a routerLink="/select-buildings">Select Buildings</a> page, if any.
+    </p>
     <table>
       <thead>
         <tr>
           <th>Building type</th>
           <th>Fraction</th>
           <th>Buildings sampled</th>
-          <th>Avg. sqft</th>
-          <th>Site EUI (kBtu/ft&sup2;)</th>
-          <th>Annual site energy (kWh)</th>
+          <th>Sample avg. sqft</th>
+          <th>Sample avg. Site EUI (kBtu/ft&sup2;)</th>
+          <th>Sample avg. annual energy (kWh)</th>
+          <th>Selected bldg_id</th>
+          <th>Selected bldg Site EUI (kBtu/ft&sup2;)</th>
         </tr>
       </thead>
       <tbody>
@@ -87,6 +102,8 @@
             <td>{{ c.avg_sqft | number: '1.0-0' }}</td>
             <td>{{ c.site_eui_kbtu_per_ft2 | number: '1.1-1' }}</td>
             <td>{{ c.annual_site_energy_kwh | number: '1.0-0' }}</td>
+            <td>{{ c.selected_bldg_id ?? '—' }}</td>
+            <td>{{ c.selected_site_eui_kbtu_per_ft2 != null ? (c.selected_site_eui_kbtu_per_ft2 | number: '1.1-1') : '—' }}</td>
           </tr>
         }
       </tbody>

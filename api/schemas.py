@@ -91,6 +91,15 @@ class CompositeComponentSpec(BaseModel):
     own (by default, the real building closest in size to `sqft`, or otherwise the first one found)."""
     label: str | None = None
     """Optional original ENERGY STAR property type name, for display purposes only."""
+    filters: dict[str, list[str]] | None = None
+    """Optional `{"in.<column>": [allowed values]}` filters narrowing this component's sampled population
+    (e.g. `{"in.vintage": ["2000 to 2012", "2013 to 2018"]}` keeps only buildings in either vintage band --
+    OR within a column, AND across columns). Applied by the building-distribution, metadata-summary, and
+    single-component time-series endpoints; not yet applied to the multi-component composite time-series
+    pipeline or measures comparison, which delegate to buildstock_processor's lower-level composite/
+    metadata functions. See `api/services.py`'s `CURATED_FILTER_COLUMNS` for the columns exposed via
+    `GET/POST .../composite/filter-options`; an unrecognized column for this component's product is
+    silently ignored rather than raising."""
 
 
 class CompositeResolveResponse(BaseModel):
@@ -131,9 +140,21 @@ class ComponentSummary(BaseModel):
     label: str | None
     fraction: float
     building_count: int
+    """Number of sampled buildings this component's `avg_sqft`/`annual_site_energy_kwh`/`site_eui_kbtu_per_ft2`
+    are averaged across -- i.e. the size of "the sample" those population-average fields describe."""
     avg_sqft: float
     annual_site_energy_kwh: float
     site_eui_kbtu_per_ft2: float
+    """The *population average* across all `building_count` sampled buildings -- distinct from
+    `selected_site_eui_kbtu_per_ft2`, which is one specific real building's own value."""
+    selected_bldg_id: int | None = None
+    """The specific building pinned for this component (e.g. via the Select Buildings page), if any."""
+    selected_sqft: float | None = None
+    selected_annual_site_energy_kwh: float | None = None
+    selected_site_eui_kbtu_per_ft2: float | None = None
+    """`selected_bldg_id`'s own EUI -- one real building's actual value, not a population average. `None`
+    if no building is pinned for this component, or the pinned `bldg_id` wasn't found in the current
+    sample (e.g. filters changed since it was selected)."""
 
 
 class EndUseValue(BaseModel):
@@ -151,6 +172,15 @@ class MetadataSummaryResponse(BaseModel):
     weighted_avg_sqft: float
     weighted_annual_site_energy_kwh: float
     weighted_site_eui_kbtu_per_ft2: float
+    """The composite's fraction-weighted site EUI using each component's *population average* -- the
+    statistically representative figure for "a typical building of this mix", not tied to any specific
+    pinned building."""
+    weighted_selected_building_annual_site_energy_kwh: float | None = None
+    weighted_selected_building_site_eui_kbtu_per_ft2: float | None = None
+    """The composite's fraction-weighted site EUI using each component's specifically *pinned* building
+    (`ComponentSummary.selected_bldg_id`) instead of its population average -- `None` unless every
+    component in the composite has a resolvable pinned building, since a partial mix of "some pinned, some
+    not" wouldn't be a meaningful weighted total."""
     by_fuel: list[EndUseValue]
     by_end_use: list[EndUseValue]
     cache_dir: str
@@ -271,6 +301,95 @@ class MosExportRequest(CompositeRequestBase):
 
     heating_columns: list[str] | None = None
     cooling_columns: list[str] | None = None
+
+
+class FilterValueCount(BaseModel):
+    value: str
+    count: int
+    """Number of sampled buildings in the current (unfiltered-by-this-column) population with this value."""
+
+
+class FilterColumnOptions(BaseModel):
+    column: str
+    """Raw metadata column name (e.g. `"in.vintage"`) -- pass this back as a key in
+    `CompositeComponentSpec.filters` to narrow the population by it."""
+    display_name: str
+    values: list[FilterValueCount]
+    """Every distinct value for this column in the current sample, sorted by descending count."""
+
+
+class ComponentFilterOptions(BaseModel):
+    product: Product
+    building_type: str
+    label: str | None
+    columns: list[FilterColumnOptions]
+    """Only curated columns (see `api/services.py`'s `CURATED_FILTER_COLUMNS`) that are actually present in
+    this component's sample and have more than one distinct value (a constant column isn't a useful
+    filter)."""
+
+
+class FilterOptionsRequest(CompositeRequestBase):
+    """Request curated, filterable metadata columns for every composite component, to build a "narrow the
+    population" filter UI -- see `buildstock_processor` result variables for the full raw column set this
+    intentionally curates down from."""
+
+
+class FilterOptionsResponse(BaseModel):
+    ok: bool
+    components: list[ComponentFilterOptions]
+    """One entry per component whose metadata could be downloaded -- a component that fails is skipped (see
+    `warnings`) rather than failing the whole request."""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class BuildingDistributionRequest(CompositeRequestBase):
+    """Request a site-EUI distribution ("PDF") for every composite component, to pick a representative
+    building from -- see `buildstock_processor.building_distribution.compute_building_distribution`."""
+
+    metric: Literal["site_eui"] = "site_eui"
+    bins: int = Field(default=30, ge=1, le=200)
+
+
+class DistributionPointOut(BaseModel):
+    """One real building's position along a `ComponentDistribution` -- mirrors
+    `buildstock_processor.building_distribution.DistributionPoint`."""
+
+    bldg_id: int
+    value: float
+    percentile_rank: float
+    sqft: float | None = None
+    annual_site_energy_kwh: float | None = None
+
+
+class ComponentDistribution(BaseModel):
+    product: Product
+    building_type: str
+    label: str | None
+    metric: str
+    unit: str
+    sample_size: int
+    mean_value: float
+    points: list[DistributionPointOut]
+    """Every (possibly downsampled) building in the sample, sorted ascending by `value` -- for a "rug plot"
+    and for the frontend to map a clicked chart position to the nearest real building."""
+    histogram_bin_edges: list[float]
+    histogram_counts: list[int]
+    histogram_density: list[float]
+    kde_x: list[float]
+    kde_y: list[float]
+    """A smoothed density curve (x, y) -- the continuous "PDF" look for the chart. Empty for a degenerate
+    (fewer than 2 distinct values) sample."""
+    percentile_buildings: dict[str, DistributionPointOut]
+    """Quick-select markers keyed `"p5"`, `"p25"`, `"median"`, `"p75"`, `"p95"`, `"mean"`."""
+
+
+class BuildingDistributionResponse(BaseModel):
+    ok: bool
+    state: str
+    distributions: list[ComponentDistribution]
+    """One entry per component that could be computed -- a component whose metadata couldn't be downloaded
+    is skipped (with a warning) rather than failing the whole request."""
+    warnings: list[str] = Field(default_factory=list)
 
 
 class ErrorResponse(BaseModel):

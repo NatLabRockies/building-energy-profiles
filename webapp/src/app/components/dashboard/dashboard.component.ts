@@ -1,6 +1,6 @@
 import { Component, OnInit, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
-import { Router } from '@angular/router';
+import { Router, RouterLink } from '@angular/router';
 import { ChartConfiguration } from 'chart.js';
 
 import { ApiService } from '../../services/api.service';
@@ -12,7 +12,7 @@ import { ChartComponent } from '../chart/chart.component';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, ChartComponent],
+  imports: [CommonModule, RouterLink, ChartComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss',
 })
