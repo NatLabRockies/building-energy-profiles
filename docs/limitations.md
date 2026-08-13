@@ -13,8 +13,8 @@ The code supports only the explicitly registered layouts:
 | ResStock | `2025/resstock_amy2018_release_1` or `2025/resstock_amy2012_release_1` | `release_1`, `weather_year="amy2018"` |
 
 New OEDI releases are not automatically compatible. Directory layouts, columns, upgrade IDs, and crosswalk files
-can change. Add and test a release in `src/buildstock_processor/comstock.py` or
-`src/buildstock_processor/resstock.py` before using it.
+can change. Add and test a release in `src/building_energy_profiles/comstock.py` or
+`src/building_energy_profiles/resstock.py` before using it.
 
 The `release` argument is always the `release_N` component. The year directory and weather-year component are
 resolved by the processor's release registry and, for ResStock, the `weather_year` argument.

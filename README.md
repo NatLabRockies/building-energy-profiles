@@ -20,7 +20,7 @@ pip install uv
 uv sync --group dev
 ```
 
-The project uses a standard `src/` package layout. `uv sync` installs `buildstock_processor` into the project
+The project uses a standard `src/` package layout. `uv sync` installs `building_energy_profiles` into the project
 environment as an editable package.
 
 ## Local Development
@@ -56,7 +56,7 @@ frontend at http://localhost:4200, and stops both on Ctrl+C.
 ```python
 from pathlib import Path
 
-from buildstock_processor import ComStockProcessor, ResStockProcessor
+from building_energy_profiles import ComStockProcessor, ResStockProcessor
 
 comstock_dir = Path("datasets/comstock")
 comstock_dir.mkdir(parents=True, exist_ok=True)
@@ -87,10 +87,10 @@ including units in multifamily buildings; they are not whole-building records. R
 
 ## Data Dictionary
 
-The package includes a parseable data dictionary in [docs/data_dictionary.md](docs/data_dictionary.md) and `src/buildstock_processor/data_dictionary.json`. It covers building types, annual result variables with parsed units, and release-specific measure upgrade packages. The same data is available without downloads from the processor classes:
+The package includes a parseable data dictionary in [docs/data_dictionary.md](docs/data_dictionary.md) and `src/building_energy_profiles/data_dictionary.json`. It covers building types, annual result variables with parsed units, and release-specific measure upgrade packages. The same data is available without downloads from the processor classes:
 
 ```python
-from buildstock_processor import BuildStock, ComStockProcessor, ResStockProcessor
+from building_energy_profiles import BuildStock, ComStockProcessor, ResStockProcessor
 
 BuildStock.building_types
 ComStockProcessor.building_types
@@ -105,10 +105,10 @@ Upgrade package ids are release-specific, so they are grouped by release in both
 
 ## ENERGY STAR Building Type Crosswalk
 
-The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/buildstock_processor/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NLR/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
+The package also includes a best-effort crosswalk from ENERGY STAR Portfolio Manager property types to BuildStock building types, in [docs/energy_star_crosswalk.md](docs/energy_star_crosswalk.md) and `src/building_energy_profiles/energy_star_crosswalk.json`. ENERGY STAR's ~84 property types are far more granular (and organized differently) than BuildStock's 15 ComStock/5 ResStock building types, so several ENERGY STAR types have no close BuildStock equivalent (e.g. "Zoo", "Swimming Pool", open-air stadiums, parking structures). This is **not** an official NLR/EPA publication -- every entry records a `match_quality` (`"exact"`, `"approximate"`, or `"unmapped"`) and `notes` explaining the reasoning, so callers can judge whether an approximate match is good enough for their use case.
 
 ```python
-from buildstock_processor import map_energy_star_property_type, energy_star_property_types_for_buildstock_type
+from building_energy_profiles import map_energy_star_property_type, energy_star_property_types_for_buildstock_type
 
 mapping = map_energy_star_property_type("Bank Branch")
 # EnergyStarMapping(energy_star_property_type='Bank Branch', buildstock_product='comstock',
@@ -123,7 +123,7 @@ energy_star_property_types_for_buildstock_type("comstock", "SmallOffice")
 Real buildings are often not well represented by a single BuildStock building type -- e.g. a building that is 70% office space over 30% ground-floor retail. `CompositeBuildingType` (see [docs/usage.md](docs/usage.md#composite-mixed-use-building-types) and [`03_composite_building_example.ipynb`](03_composite_building_example.ipynb)) models this as a fraction-weighted combination of two or more `(product, building_type)` components -- including mixing ComStock and ResStock components (e.g. ground-floor retail under apartments). `pull_composite_time_series()` downloads a representative building's time series per component and auto-stitches them into one synthetic composite time series; `combine_composite_time_series()` does the combining step alone if you've already downloaded component time series yourself.
 
 ```python
-from buildstock_processor import CompositeBuildingType, pull_composite_time_series
+from building_energy_profiles import CompositeBuildingType, pull_composite_time_series
 
 office_retail = CompositeBuildingType.from_fractions(
     "70% MediumOffice / 30% RetailStripmall",
@@ -135,7 +135,7 @@ combined, components = pull_composite_time_series(office_retail, save_dir=compos
 ## Package Layout
 
 ```text
-src/buildstock_processor/
+src/building_energy_profiles/
 |-- __init__.py                  # public processors and abstract extension types
 |-- _base.py                     # BuildStockProcessor ABC and shared workflows
 |-- comstock.py                  # ComStock implementation and releases
@@ -147,14 +147,14 @@ src/buildstock_processor/
 
 ## ComStockProcessor Class
 
-The `ComStockProcessor` class is located in `src/buildstock_processor/comstock.py` and provides methods to
+The `ComStockProcessor` class is located in `src/building_energy_profiles/comstock.py` and provides methods to
 download and process ComStock building data.
 
 ### Initialization
 
 ```python
 from pathlib import Path
-from buildstock_processor import ComStockProcessor
+from building_energy_profiles import ComStockProcessor
 
 # Initialize the processor
 processor = ComStockProcessor(
@@ -182,7 +182,7 @@ supports the last three published releases of the ComStock AMY2018 dataset, sele
 
 If `release` is omitted, the most recent supported release is used. Passing an unsupported value raises a `ValueError`
 listing the currently supported releases. The full set of supported releases and their on-disk locations are defined
-in `SUPPORTED_RELEASES` in `src/buildstock_processor/comstock.py` — when NLR publishes a new release, add it there and drop the
+in `SUPPORTED_RELEASES` in `src/building_energy_profiles/comstock.py` — when NLR publishes a new release, add it there and drop the
 oldest entry to keep a rolling window of three supported releases.
 
 ### OEDI year and release paths
@@ -325,7 +325,7 @@ upgrade_id_r1 = processor.find_upgrade_id(save_dir=base_dir, measure_id="hvac_00
 
 ```python
 from pathlib import Path
-from buildstock_processor import ComStockProcessor
+from building_energy_profiles import ComStockProcessor
 
 # Set up directories
 base_dir = Path("./datasets/comstock")
@@ -367,15 +367,15 @@ The processor downloads data from the ComStock dataset hosted on AWS S3. For exa
 
 ## ResStockProcessor Class
 
-The `ResStockProcessor` class (in `src/buildstock_processor/resstock.py`) provides the same interface for NLR's
+The `ResStockProcessor` class (in `src/building_energy_profiles/resstock.py`) provides the same interface for NLR's
 **residential** building stock dataset, ResStock, which is hosted on the same OEDI data lake. It shares
 its download/caching/upgrade-lookup infrastructure with `ComStockProcessor` via a common
-abstract `BuildStockProcessor` base class (`src/buildstock_processor/_base.py`), but has its own metadata layout and
+abstract `BuildStockProcessor` base class (`src/building_energy_profiles/_base.py`), but has its own metadata layout and
 release registry, since ResStock's file structure and building-type categories differ from ComStock's.
 
 ```python
 from pathlib import Path
-from buildstock_processor import ResStockProcessor
+from building_energy_profiles import ResStockProcessor
 
 processor = ResStockProcessor(
     state="CA",

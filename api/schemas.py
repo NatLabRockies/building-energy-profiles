@@ -67,7 +67,7 @@ class ResolvedComponent(BaseModel):
     bldg_id: int | None = None
     """The real sampled building (closest in floor area to `sqft`) auto-selected for this component, if
     `CompositeResolveRequest.state` was given in sqft mode -- see
-    `buildstock_processor.composite.find_nearest_sqft_bldg_id()`. Reused as-is by every downstream page
+    `building_energy_profiles.composite.find_nearest_sqft_bldg_id()`. Reused as-is by every downstream page
     (Dashboard/Timeseries/Measures) via `CompositeComponentSpec.bldg_id` instead of each independently
     guessing a representative building."""
     match_quality: Literal["exact", "approximate", "unmapped"]
@@ -83,7 +83,7 @@ class CompositeComponentSpec(BaseModel):
     sqft: float | None = Field(default=None, gt=0)
     """Absolute target square footage for this component. When every component in a request sets this,
     results are scaled to represent an actual building of that square footage (see
-    `buildstock_processor.composite.pull_composite_time_series`'s `target_sqft` parameter) instead of just
+    `building_energy_profiles.composite.pull_composite_time_series`'s `target_sqft` parameter) instead of just
     a floor-area share of an unspecified total."""
     bldg_id: int | None = None
     """Pin a specific representative building for this component (e.g. one already selected by
@@ -96,7 +96,7 @@ class CompositeComponentSpec(BaseModel):
     (e.g. `{"in.vintage": ["2000 to 2012", "2013 to 2018"]}` keeps only buildings in either vintage band --
     OR within a column, AND across columns). Applied by the building-distribution, metadata-summary, and
     single-component time-series endpoints; not yet applied to the multi-component composite time-series
-    pipeline or measures comparison, which delegate to buildstock_processor's lower-level composite/
+    pipeline or measures comparison, which delegate to building_energy_profiles's lower-level composite/
     metadata functions. See `api/services.py`'s `CURATED_FILTER_COLUMNS` for the columns exposed via
     `GET/POST .../composite/filter-options`; an unrecognized column for this component's product is
     silently ignored rather than raising."""
@@ -160,7 +160,7 @@ class ComponentSummary(BaseModel):
     to -- ~1 for a whole-building (ComStock) component sized to its own average, and the dwelling-unit
     count for a ResStock component (e.g. 28.4 apartments). Set whenever the composite is sized by floor
     area (any mix of ComStock and ResStock components, or an explicit sqft target) -- see
-    `buildstock_processor.composite.resolve_fraction_weights_for()`. `None` in bare-fraction mode (a
+    `building_energy_profiles.composite.resolve_fraction_weights_for()`. `None` in bare-fraction mode (a
     single-product composite with no sqft target), where there's no floor area to count units against."""
 
 
@@ -337,7 +337,7 @@ class ComponentFilterOptions(BaseModel):
 
 class FilterOptionsRequest(CompositeRequestBase):
     """Request curated, filterable metadata columns for every composite component, to build a "narrow the
-    population" filter UI -- see `buildstock_processor` result variables for the full raw column set this
+    population" filter UI -- see `building_energy_profiles` result variables for the full raw column set this
     intentionally curates down from."""
 
 
@@ -351,7 +351,7 @@ class FilterOptionsResponse(BaseModel):
 
 class BuildingDistributionRequest(CompositeRequestBase):
     """Request a site-EUI distribution ("PDF") for every composite component, to pick a representative
-    building from -- see `buildstock_processor.building_distribution.compute_building_distribution`."""
+    building from -- see `building_energy_profiles.building_distribution.compute_building_distribution`."""
 
     metric: Literal["site_eui"] = "site_eui"
     bins: int = Field(default=30, ge=1, le=200)
@@ -359,7 +359,7 @@ class BuildingDistributionRequest(CompositeRequestBase):
 
 class DistributionPointOut(BaseModel):
     """One real building's position along a `ComponentDistribution` -- mirrors
-    `buildstock_processor.building_distribution.DistributionPoint`."""
+    `building_energy_profiles.building_distribution.DistributionPoint`."""
 
     bldg_id: int
     value: float

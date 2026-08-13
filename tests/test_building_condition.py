@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from buildstock_processor.building_condition import (
+from building_energy_profiles.building_condition import (
     KWH_TO_KBTU,
     select_building_condition_sample,
 )

@@ -1,4 +1,4 @@
-"""Business logic bridging the composite building explorer API to buildstock_processor.
+"""Business logic bridging the composite building explorer API to building_energy_profiles.
 
 Every endpoint in `api/main.py` is a thin wrapper around a function here. Keeping this layer separate
 (and free of any FastAPI/HTTP concepts) makes it straightforward to unit test the pure logic (see
@@ -46,9 +46,9 @@ from api.schemas import (
     TimeseriesRequest,
     TimeseriesResponse,
 )
-from buildstock_processor import location
-from buildstock_processor.building_distribution import compute_building_distribution
-from buildstock_processor.composite import (
+from building_energy_profiles import location
+from building_energy_profiles.building_distribution import compute_building_distribution
+from building_energy_profiles.composite import (
     CompositeBuildingType,
     CompositeComponent,
     find_nearest_sqft_bldg_id,
@@ -57,13 +57,13 @@ from buildstock_processor.composite import (
     pull_composite_time_series,
     resolve_fraction_weights_for,
 )
-from buildstock_processor.comstock import ComStockProcessor
-from buildstock_processor.data_dictionary import result_variables_from_columns
-from buildstock_processor.energy_star_crosswalk import (
+from building_energy_profiles.comstock import ComStockProcessor
+from building_energy_profiles.data_dictionary import result_variables_from_columns
+from building_energy_profiles.energy_star_crosswalk import (
     energy_star_crosswalk,
     map_energy_star_property_type,
 )
-from buildstock_processor.resstock import ResStockProcessor
+from building_energy_profiles.resstock import ResStockProcessor
 
 # Fuel/end-use source names that are stock-level aggregates, not distinct fuels -- excluded from the
 # by-fuel breakdown so they don't double-count alongside their constituent fuels.
@@ -413,7 +413,7 @@ def _distribution_point_to_schema(point: Any) -> DistributionPointOut:
 
 def get_building_distributions(request: BuildingDistributionRequest, settings: Settings) -> BuildingDistributionResponse:
     """For each composite component, download its metadata and compute a site-EUI distribution ("PDF") --
-    see `buildstock_processor.building_distribution.compute_building_distribution`.
+    see `building_energy_profiles.building_distribution.compute_building_distribution`.
 
     Lets a caller (the webapp's building-selection step) show, for each component in a mixed-use
     composite, the spread of real sampled buildings of that type/location, so a user can either click a

@@ -7,10 +7,10 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor._base import BuildStockProcessor
-from buildstock_processor.comstock import ComStockProcessor
-from buildstock_processor.location import list_available_counties, list_available_states
-from buildstock_processor.resstock import ResStockProcessor
+from building_energy_profiles._base import BuildStockProcessor
+from building_energy_profiles.comstock import ComStockProcessor
+from building_energy_profiles.location import list_available_counties, list_available_states
+from building_energy_profiles.resstock import ResStockProcessor
 
 
 class TestListAvailableStates:

@@ -217,7 +217,7 @@ css = [
 ]
 
 [[package]]
-name = "buildstock-processor"
+name = "building-energy-profiles"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [

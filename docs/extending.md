@@ -4,7 +4,7 @@
 It is exported from the top-level package:
 
 ```python
-from buildstock_processor import (
+from building_energy_profiles import (
     BuildStockProcessor,
     BuildStockRelease,
     MetadataPartition,
@@ -72,7 +72,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from buildstock_processor import (
+from building_energy_profiles import (
     BuildStockProcessor,
     MetadataPartition,
 )

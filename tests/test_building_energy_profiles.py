@@ -7,13 +7,13 @@ build cache filenames and validate release identifiers.
 
 import pytest
 
-from buildstock_processor import BuildStockProcessor, ComStockProcessor, ResStockProcessor
-from buildstock_processor._base import BuildStockRelease, scope_label, sqft_label, validate_release
-from buildstock_processor.comstock import SUPPORTED_RELEASES as COMSTOCK_SUPPORTED_RELEASES
-from buildstock_processor.resstock import (
+from building_energy_profiles import BuildStockProcessor, ComStockProcessor, ResStockProcessor
+from building_energy_profiles._base import BuildStockRelease, scope_label, sqft_label, validate_release
+from building_energy_profiles.comstock import SUPPORTED_RELEASES as COMSTOCK_SUPPORTED_RELEASES
+from building_energy_profiles.resstock import (
     SUPPORTED_RELEASES as RESSTOCK_SUPPORTED_RELEASES,
 )
-from buildstock_processor.resstock import (
+from building_energy_profiles.resstock import (
     SUPPORTED_WEATHER_YEARS,
 )
 

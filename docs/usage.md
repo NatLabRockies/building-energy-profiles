@@ -1,6 +1,6 @@
 # Usage Guide
 
-This guide covers the common workflows supported by `buildstock_processor`. For assumptions and known constraints,
+This guide covers the common workflows supported by `building_energy_profiles`. For assumptions and known constraints,
 read [Data Model and Limitations](limitations.md).
 
 ## Install from the Repository
@@ -41,7 +41,7 @@ ComStock records are commercial whole buildings. The example below searches a gr
 building-type and floor-area filters.
 
 ```python
-from buildstock_processor import ComStockProcessor
+from building_energy_profiles import ComStockProcessor
 
 comstock_processor = ComStockProcessor(
     state="CO",
@@ -79,7 +79,7 @@ ResStock records are residential dwelling units. A multifamily result is one sam
 its containing building.
 
 ```python
-from buildstock_processor import ResStockProcessor
+from building_energy_profiles import ResStockProcessor
 
 resstock_processor = ResStockProcessor(
     state="DC",
@@ -292,7 +292,7 @@ is 70% office space over 30% ground-floor retail. `CompositeBuildingType` models
 combination of two or more `(product, building_type)` components (fractions must sum to 1.0).
 
 ```python
-from buildstock_processor import CompositeBuildingType, pull_composite_time_series
+from building_energy_profiles import CompositeBuildingType, pull_composite_time_series
 
 office_retail = CompositeBuildingType.from_fractions(
     "70% MediumOffice / 30% RetailStripmall",

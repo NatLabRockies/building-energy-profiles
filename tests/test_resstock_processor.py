@@ -10,8 +10,8 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor._base import MetadataPartition, scope_label, sqft_label
-from buildstock_processor.resstock import (
+from building_energy_profiles._base import MetadataPartition, scope_label, sqft_label
+from building_energy_profiles.resstock import (
     DEFAULT_RELEASE,
     DEFAULT_WEATHER_YEAR,
     RESSTOCK_BUILDING_TYPES,

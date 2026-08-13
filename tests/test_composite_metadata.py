@@ -12,9 +12,9 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-from buildstock_processor import CompositeBuildingType
-from buildstock_processor._base import BuildStockProcessor
-from buildstock_processor.composite_metadata import (
+from building_energy_profiles import CompositeBuildingType
+from building_energy_profiles._base import BuildStockProcessor
+from building_energy_profiles.composite_metadata import (
     KWH_TO_KBTU,
     compare_composite_measures,
     summarize_composite_metadata,

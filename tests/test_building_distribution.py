@@ -5,7 +5,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from buildstock_processor.building_distribution import (
+from building_energy_profiles.building_distribution import (
     PERCENTILE_TARGETS,
     compute_building_distribution,
 )

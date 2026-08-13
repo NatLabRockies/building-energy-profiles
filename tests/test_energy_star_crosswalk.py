@@ -2,7 +2,7 @@
 
 import pytest
 
-from buildstock_processor import (
+from building_energy_profiles import (
     ComStockProcessor,
     EnergyStarMapping,
     ResStockProcessor,
