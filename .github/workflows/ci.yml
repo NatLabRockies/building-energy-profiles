@@ -34,15 +34,6 @@ jobs:
         run: uv run pytest tests/ -v --tb=short -m "unit"
       - name: Run integration tests (fast)
         run: uv run pytest tests/ -v --tb=short -m "integration"
-      - name: Run integration tests with large data download
-        env:
-          TEST_DATA: "true"
-        # Bounded and best-effort: state="All" now downloads every state's/county's metadata partition
-        # file (thousands of small files) instead of one cached national parquet, so this can be slow
-        # depending on the runner's available parallelism. Don't let it hang the job indefinitely.
-        timeout-minutes: 15
-        continue-on-error: true
-        run: uv run pytest tests/ -v --tb=short -m "integration" || true
 
   # Best-effort, informational only: these notebooks download and process full-state ComStock/ResStock
   # metadata (e.g. 01_data_sampling_example.ipynb's state="CA", county_name="All", building_type="All"

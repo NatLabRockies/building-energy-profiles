@@ -1,4 +1,4 @@
-import { Component, OnInit, signal } from '@angular/core';
+import { Component, OnInit, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { Router, RouterLink } from '@angular/router';
 import { ChartConfiguration } from 'chart.js';
@@ -23,6 +23,13 @@ export class DashboardComponent implements OnInit {
 
   byFuelChartData?: ChartConfiguration<'pie'>['data'];
   byEndUseChartData?: ChartConfiguration<'bar'>['data'];
+
+  /** True once the composite is sized by floor area (e.g. any mix of ComStock and ResStock components) --
+   * that's the only case where `ComponentSummary.unit_multiplier` (the number of representative
+   * buildings/dwelling units, such as apartment count for a multifamily component) is populated and
+   * worth showing as its own column. */
+  readonly hasUnitMultipliers = computed(() => this.summary()?.components.some((c) => c.unit_multiplier != null) ?? false);
+
   readonly pieOptions: ChartConfiguration<'pie'>['options'] = {
     responsive: true,
     maintainAspectRatio: false,
