@@ -18,6 +18,12 @@ component contributes its `fraction` share of an unspecified-size composite (fra
 map covering every component) instead scales each component to an absolute floor area, so results represent
 an actual building of that combined square footage rather than a floor-area-agnostic share.
 
+Composites that mix ComStock and ResStock components are always sized by floor area (as is any composite
+given an explicit `total_sqft`), because a ResStock row is one dwelling unit rather than a whole building:
+each component's floor-area share is divided by its own average size, which turns a multifamily component
+into a realistic dwelling-unit count instead of a fraction of a single apartment. See
+`composite.resolve_fraction_weights()` and `ComponentMetadataSummary.unit_multiplier`.
+
 A `compare_composite_measures()` comparison entry may be a bare upgrade id (e.g. `"5"`, applied to every
 component regardless of product -- only meaningful when every component shares the same upgrade catalog) or
 a `"<product>:<upgrade_id>"`-prefixed entry (e.g. `"comstock:5"`) that isolates the upgrade to components of
@@ -44,7 +50,7 @@ import pandas as pd
 
 from ._base import BuildStockProcessor
 from .building_condition import DEFAULT_BAND, select_building_condition_sample
-from .composite import CompositeBuildingType, CompositeComponent
+from .composite import CompositeBuildingType, CompositeComponent, is_dwelling_unit_product, resolve_fraction_weights
 from .comstock import ComStockProcessor
 from .data_dictionary import result_variables_from_columns
 from .resstock import ResStockProcessor
@@ -99,6 +105,11 @@ class ComponentMetadataSummary:
     """(min, max) annual site energy across the percentile band -- an error range reflecting how much
     buildings *within the same condition band* still vary, distinct from the full sample's spread. Only set
     when `building_condition` was set for this component."""
+    unit_multiplier: float | None = None
+    """How many of this component's representative buildings/dwelling units its floor area works out to --
+    ~1 for a whole-building (ComStock) component sized to its own average, and the dwelling-unit count for a
+    ResStock component (e.g. 28 apartments). `None` in bare-`fraction` mode, where the composite has no
+    floor area to count against (see `composite.resolve_fraction_weights()`)."""
 
 
 @dataclass(frozen=True)
@@ -262,11 +273,17 @@ def summarize_composite_metadata(
     min_sqft: float | None = None,
     max_sqft: float | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
+    total_sqft: float | None = None,
     building_condition: Mapping[tuple[str, str], float] | None = None,
     building_condition_band: float = DEFAULT_BAND,
 ) -> CompositeMetadataSummary:
     """Summarize a composite building's expected annual energy use: total site energy, site EUI, and a
     by-fuel/by-end-use breakdown, weighted across every component's `fraction` (or `target_sqft`, if given).
+
+    A composite that mixes ComStock and ResStock components (or one given an explicit `total_sqft`) is sized
+    by floor area instead of by bare fractions, so a ResStock component contributes a realistic dwelling-unit
+    count rather than a fraction of a single apartment -- see `composite.resolve_fraction_weights()` and each
+    component's `unit_multiplier`.
 
     Unlike `estimate_portfolio_energy()` (which reports the *population* mean and standard deviation across
     every sampled building of a type), this reports just the *mean* per component -- a faster, simpler
@@ -286,6 +303,11 @@ def summarize_composite_metadata(
     weighted_site_energy = 0.0
     weighted_building_count = 0
     warnings: list[str] = []
+
+    # Pass 1: load every component's sample. Scales can't be computed inline because a fraction-mode
+    # composite's implied total floor area depends on *all* components' average sizes.
+    loaded: list[dict[str, Any]] = []
+    component_sqft: dict[tuple[str, str], float] = {}
 
     for component in composite.components:
         processor = _processor_for(component, save_dir, state, county_name, upgrade, release_by_product, min_sqft, max_sqft)
@@ -328,23 +350,67 @@ def summarize_composite_metadata(
         else:
             annual_site_energy = 0.0
 
-        # Site EUI (energy per sqft) is an intensity, so it's unaffected by target_sqft-mode scaling either way.
-        eui = (annual_site_energy * KWH_TO_KBTU) / avg_sqft if avg_sqft else 0.0
+        if avg_sqft:
+            component_sqft[component.key] = avg_sqft
+        loaded.append(
+            {
+                "component": component,
+                "metadata": metadata,
+                "source_metadata": source_metadata,
+                "sqft_column": sqft_column,
+                "avg_sqft": avg_sqft,
+                "annual_site_energy": annual_site_energy,
+                "percentile": percentile,
+                "condition_sample_size": condition_sample_size,
+                "energy_range": energy_range,
+                "use_median": use_median,
+            }
+        )
 
-        if target_sqft is not None:
+    if target_sqft is not None:
+        scales: dict[tuple[str, str], float] = {}
+        for component in composite.components:
             if component.key not in target_sqft:
                 raise ValueError(f"Missing target_sqft for composite component {component.key}")
-            if not avg_sqft:
+            if component.key not in component_sqft:
                 raise ValueError(f"Could not determine floor area for component {component.key} to scale by target_sqft.")
-            display_sqft = target_sqft[component.key]
-            scale = display_sqft / avg_sqft
-            display_energy = eui / KWH_TO_KBTU * display_sqft
+            scales[component.key] = target_sqft[component.key] / component_sqft[component.key]
+        area_scaled = True
+    else:
+        # A mixed ComStock/ResStock composite (or an explicit total_sqft) is sized by floor area so a
+        # ResStock component becomes a dwelling-unit count rather than a fraction of one apartment.
+        resolved = resolve_fraction_weights(composite, component_sqft, total_sqft)
+        area_scaled = resolved is not None
+        scales = resolved or {component.key: component.fraction for component in composite.components}
+
+    # Pass 2: scale and accumulate.
+    composite_total_sqft = sum(scales[component.key] * component_sqft.get(component.key, 0.0) for component in composite.components)
+    for entry in loaded:
+        component: CompositeComponent = entry["component"]
+        avg_sqft = entry["avg_sqft"]
+        annual_site_energy = entry["annual_site_energy"]
+        energy_range = entry["energy_range"]
+        source_metadata = entry["source_metadata"]
+        use_median = entry["use_median"]
+        scale = scales[component.key]
+
+        # Site EUI (energy per sqft) is an intensity, so it's unaffected by any of the sizing modes.
+        eui = (annual_site_energy * KWH_TO_KBTU) / avg_sqft if avg_sqft else 0.0
+
+        if area_scaled:
+            display_sqft = scale * avg_sqft
+            display_energy = scale * annual_site_energy
             display_energy_range = (energy_range[0] * scale, energy_range[1] * scale) if energy_range is not None else None
-            warning = _sqft_bounds_warning(component, metadata, sqft_column, display_sqft)
-            if warning:
-                warnings.append(warning)
+            if not is_dwelling_unit_product(component.product):
+                warning = _sqft_bounds_warning(component, entry["metadata"], entry["sqft_column"], display_sqft)
+                if warning:
+                    warnings.append(warning)
+            elif target_sqft is None:
+                warnings.append(
+                    f"({component.product}, {component.building_type}): {component.fraction:.0%} of the composite's "
+                    f"{composite_total_sqft:,.0f} sqft is modeled as ~{scale:,.0f} dwelling unit(s) of {avg_sqft:,.0f} sqft each."
+                )
         else:
-            scale = component.fraction
             display_sqft = avg_sqft
             display_energy = annual_site_energy
             display_energy_range = energy_range
@@ -354,23 +420,24 @@ def summarize_composite_metadata(
                 key=component.key,
                 building_type=component.building_type,
                 fraction=component.fraction,
-                building_count=len(metadata),
+                building_count=len(entry["metadata"]),
                 avg_sqft=display_sqft,
                 annual_site_energy_kwh=display_energy,
                 site_eui_kbtu_per_ft2=eui,
-                building_condition_percentile=percentile,
-                condition_sample_size=condition_sample_size,
+                building_condition_percentile=entry["percentile"],
+                condition_sample_size=entry["condition_sample_size"],
                 annual_site_energy_kwh_range=display_energy_range,
+                unit_multiplier=scale if area_scaled else None,
             )
         )
 
-        # These accumulation lines are identical for both modes -- only `scale`'s definition differs. In
-        # target_sqft mode, `scale * avg_sqft == target_sqft` and `scale * annual_site_energy == intensity *
-        # target_sqft`, so summing across components yields the composite's total floor area and total
-        # energy for that floor area (rather than a fraction-weighted average of population means).
+        # These accumulation lines are identical for every mode -- only `scale`'s definition differs. When
+        # `area_scaled`, `scale * avg_sqft` is this component's actual floor area and `scale *
+        # annual_site_energy` its energy for that area, so summing across components yields the composite's
+        # total floor area and total energy (rather than a fraction-weighted average of population means).
         weighted_sqft += scale * avg_sqft
         weighted_site_energy += scale * annual_site_energy
-        weighted_building_count += len(metadata)
+        weighted_building_count += len(entry["metadata"])
 
         for variable in result_variables_from_columns(source_metadata.columns):
             if variable.metric != "energy_consumption" or variable.source is None or variable.end_use is None:
@@ -414,6 +481,7 @@ def compare_composite_measures(
     min_sqft: float | None = None,
     max_sqft: float | None = None,
     target_sqft: Mapping[tuple[str, str], float] | None = None,
+    total_sqft: float | None = None,
     metric_columns: list[str] | None = None,
     building_condition: Mapping[tuple[str, str], float] | None = None,
     building_condition_band: float = DEFAULT_BAND,
@@ -456,6 +524,11 @@ def compare_composite_measures(
     baseline_end_use: dict[str, float] = {}
     warnings: list[str] = []
 
+    # Pass 1: load each component's samples and floor area. Scales can't be computed inline because a
+    # fraction-mode composite's implied total floor area depends on *all* components' average sizes.
+    loaded: list[dict[str, Any]] = []
+    component_sqft: dict[tuple[str, str], float] = {}
+
     for component in composite.components:
         processor = _processor_for(component, save_dir, state, county_name, baseline_upgrade, release_by_product, min_sqft, max_sqft)
         product = component.key[0]
@@ -492,28 +565,63 @@ def compare_composite_measures(
                         "site EUI -- this component's comparison may be noisy; consider a wider building_condition_band."
                     )
 
-        if target_sqft is not None:
-            # Floor area doesn't change across upgrades for the same building type, so the baseline
-            # upgrade's group average sqft is used as the scaling denominator for every upgrade.
-            sqft_column = _find_column(combined_metadata.columns, "in.sqft")
-            baseline_group_for_sqft = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
-            if selected_bldg_ids is not None:
-                baseline_group_for_sqft = baseline_group_for_sqft[baseline_group_for_sqft["bldg_id"].isin(selected_bldg_ids)]
-            avg_sqft = (
-                float(pd.to_numeric(baseline_group_for_sqft[sqft_column], errors="coerce").mean())
-                if sqft_column and not baseline_group_for_sqft.empty
-                else 0.0
-            )
-            if not avg_sqft:
-                raise ValueError(f"Could not determine floor area for component {component.key} to scale by target_sqft.")
+        # Floor area doesn't change across upgrades for the same building type, so the baseline upgrade's
+        # group average sqft is used as the scaling denominator for every upgrade.
+        sqft_column = _find_column(combined_metadata.columns, "in.sqft")
+        baseline_group_for_sqft = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
+        if selected_bldg_ids is not None:
+            baseline_group_for_sqft = baseline_group_for_sqft[baseline_group_for_sqft["bldg_id"].isin(selected_bldg_ids)]
+        avg_sqft = (
+            float(pd.to_numeric(baseline_group_for_sqft[sqft_column], errors="coerce").mean())
+            if sqft_column and not baseline_group_for_sqft.empty
+            else 0.0
+        )
+        if avg_sqft:
+            component_sqft[component.key] = avg_sqft
+
+        loaded.append(
+            {
+                "component": component,
+                "product": product,
+                "combined_metadata": combined_metadata,
+                "selected_bldg_ids": selected_bldg_ids,
+                "use_median": use_median,
+                "sqft_column": sqft_column,
+                "baseline_group_for_sqft": baseline_group_for_sqft,
+            }
+        )
+
+    if target_sqft is not None:
+        scales: dict[tuple[str, str], float] = {}
+        for component in composite.components:
             if component.key not in target_sqft:
                 raise ValueError(f"Missing target_sqft for composite component {component.key}")
-            scale = target_sqft[component.key] / avg_sqft
-            warning = _sqft_bounds_warning(component, baseline_group_for_sqft, sqft_column, target_sqft[component.key])
+            if component.key not in component_sqft:
+                raise ValueError(f"Could not determine floor area for component {component.key} to scale by target_sqft.")
+            scales[component.key] = target_sqft[component.key] / component_sqft[component.key]
+        area_scaled = True
+    else:
+        # A mixed ComStock/ResStock composite (or an explicit total_sqft) is sized by floor area so a
+        # ResStock component becomes a dwelling-unit count rather than a fraction of one apartment.
+        resolved = resolve_fraction_weights(composite, component_sqft, total_sqft)
+        area_scaled = resolved is not None
+        scales = resolved or {component.key: component.fraction for component in composite.components}
+
+    # Pass 2: scale and accumulate.
+    for entry in loaded:
+        component: CompositeComponent = entry["component"]
+        product = entry["product"]
+        combined_metadata = entry["combined_metadata"]
+        selected_bldg_ids = entry["selected_bldg_ids"]
+        use_median = entry["use_median"]
+        scale = scales[component.key]
+
+        if area_scaled and not is_dwelling_unit_product(component.product):
+            warning = _sqft_bounds_warning(
+                component, entry["baseline_group_for_sqft"], entry["sqft_column"], scale * component_sqft[component.key]
+            )
             if warning:
                 warnings.append(warning)
-        else:
-            scale = component.fraction
 
         baseline_group = combined_metadata[combined_metadata["upgrade"] == baseline_upgrade]
         if selected_bldg_ids is not None:
