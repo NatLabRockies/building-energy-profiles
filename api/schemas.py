@@ -155,6 +155,13 @@ class ComponentSummary(BaseModel):
     """`selected_bldg_id`'s own EUI -- one real building's actual value, not a population average. `None`
     if no building is pinned for this component, or the pinned `bldg_id` wasn't found in the current
     sample (e.g. filters changed since it was selected)."""
+    unit_multiplier: float | None = None
+    """How many of this component's representative buildings/dwelling units its floor-area share works out
+    to -- ~1 for a whole-building (ComStock) component sized to its own average, and the dwelling-unit
+    count for a ResStock component (e.g. 28.4 apartments). Set whenever the composite is sized by floor
+    area (any mix of ComStock and ResStock components, or an explicit sqft target) -- see
+    `building_energy_profiles.composite.resolve_fraction_weights_for()`. `None` in bare-fraction mode (a
+    single-product composite with no sqft target), where there's no floor area to count units against."""
 
 
 class EndUseValue(BaseModel):

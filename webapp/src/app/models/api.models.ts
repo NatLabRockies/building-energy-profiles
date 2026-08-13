@@ -93,6 +93,12 @@ export interface ComponentSummary {
   selected_sqft?: number | null;
   selected_annual_site_energy_kwh?: number | null;
   selected_site_eui_kbtu_per_ft2?: number | null;
+  /** How many of this component's representative buildings/dwelling units its floor-area share works out
+   * to -- ~1 for a whole-building (ComStock) component sized to its own average, and the dwelling-unit
+   * count for a ResStock component (e.g. 28.4 apartments). Set whenever the composite is sized by floor
+   * area (any mix of ComStock and ResStock components, or an explicit sqft target); `null` in
+   * bare-fraction mode, where there's no floor area to count units against. */
+  unit_multiplier?: number | null;
 }
 
 export interface EndUseValue {

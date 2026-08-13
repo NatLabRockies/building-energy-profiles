@@ -6,21 +6,42 @@ ComStockProcessor and ResStockProcessor both build on this module: the two datas
 bucket, the same time series file layout, and the same upgrades_lookup.json convention, but differ in how
 metadata is partitioned (ComStock: state+county, ResStock: state-only) and in their measure crosswalk file
 format (ComStock: csv, ResStock: xlsx), so that logic lives in each product's own module.
+
+Metadata is published on S3 as a Hive-partitioned Parquet dataset (`state=XX/county=YYYY/...`), so partition
+discovery and reads here go through PyArrow's `pyarrow.fs`/`pyarrow.dataset` (anonymous S3 access, no
+credentials needed for this public bucket) instead of hand-rolled S3 XML listing + plain HTTP downloads.
+This gets us PyArrow's own retrying/multi-threaded S3 reader, and lets square-footage filtering be pushed
+down to the Parquet reader (skipping row groups outside the requested range) rather than always
+materializing every row into pandas before filtering.
 """
 
 import json
-import xml.etree.ElementTree as ET
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 
 import pandas as pd
+import pyarrow.dataset as ds
+import pyarrow.fs as pafs
+import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
 
-# XML namespace used in the S3 "list bucket" (list-type=2) XML responses.
-_S3_LIST_XML_NS = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+# Region hosting the public, unauthenticated oedi-data-lake bucket. Passing this explicitly avoids an
+# extra HEAD request PyArrow would otherwise make to auto-detect it.
+_S3_REGION = "us-west-2"
+
+
+@lru_cache(maxsize=1)
+def _s3_filesystem() -> pafs.S3FileSystem:
+    """A shared, anonymous PyArrow S3 filesystem for the public oedi-data-lake bucket.
+
+    Cached so repeated calls (partition listing, partition reads) reuse one client/connection pool
+    instead of constructing a new one each time.
+    """
+    return pafs.S3FileSystem(anonymous=True, region=_S3_REGION)
 
 
 @dataclass(frozen=True)
@@ -119,54 +140,40 @@ class BuildStockProcessor(ABC):
     def _list_common_prefixes(self, key_prefix: str) -> list[str]:
         """List the immediate child "folder" names directly under an S3 key prefix.
 
-        Uses the public, unauthenticated S3 list-objects-v2 REST API against the oedi-data-lake
-        bucket, e.g. to discover which state=XX or county=YYYYYYY partitions exist.
+        Uses PyArrow's S3 filesystem (anonymous access) against the public oedi-data-lake bucket to walk
+        its Hive-style partition layout, e.g. to discover which state=XX or county=YYYYYYY partitions
+        exist, without downloading any of the partition files themselves.
         """
-        names: list[str] = []
-        continuation_token = None
+        selector = pafs.FileSelector(f"{self.BUCKET}/{key_prefix}", recursive=False, allow_not_found=True)
+        infos = _s3_filesystem().get_file_info(selector)
+        return [info.path.rsplit("/", 1)[-1] for info in infos if info.type == pafs.FileType.Directory]
 
-        while True:
-            params = {"list-type": "2", "prefix": key_prefix, "delimiter": "/"}
-            if continuation_token:
-                params["continuation-token"] = continuation_token
+    def _s3_path_from_url(self, url: str) -> str:
+        """Convert one of this processor's `https://{bucket}.s3.amazonaws.com/...` URLs into the bucket/key
+        path PyArrow's S3 filesystem expects.
+        """
+        https_prefix = f"https://{self.BUCKET}.s3.amazonaws.com/"
+        if not url.startswith(https_prefix):
+            raise ValueError(f"Expected a {self.BUCKET!r} S3 URL, got: {url}")
+        return f"{self.BUCKET}/{url[len(https_prefix) :]}"
 
-            response = requests.get(f"https://{self.BUCKET}.s3.amazonaws.com/", params=params, timeout=60)
-            response.raise_for_status()
-            # The XML here comes from AWS S3's own list-objects-v2 API against a hardcoded, trusted
-            # bucket (not user-supplied data), so the usual XXE concerns with `xml.etree` don't apply.
-            root = ET.fromstring(response.content)  # noqa: S314
-
-            for common_prefix in root.findall("s3:CommonPrefixes", _S3_LIST_XML_NS):
-                prefix_el = common_prefix.find("s3:Prefix", _S3_LIST_XML_NS)
-                if prefix_el is None or prefix_el.text is None:
-                    continue
-                names.append(prefix_el.text[len(key_prefix) :].rstrip("/"))
-
-            is_truncated_el = root.find("s3:IsTruncated", _S3_LIST_XML_NS)
-            if is_truncated_el is None or is_truncated_el.text != "true":
-                break
-
-            token_el = root.find("s3:NextContinuationToken", _S3_LIST_XML_NS)
-            if token_el is None or not token_el.text:
-                break
-            continuation_token = token_el.text
-
-        return names
+    def _sqft_filter_expression(self) -> ds.Expression | None:
+        """Build a PyArrow dataset filter expression for `self.min_sqft`/`self.max_sqft` (either or both
+        may be None), to be pushed down into the Parquet reader rather than applied after the fact in
+        pandas. Returns None if neither bound is set (i.e. no filtering).
+        """
+        expression: ds.Expression | None = None
+        if self.min_sqft is not None:
+            expression = ds.field("in.sqft..ft2") >= self.min_sqft
+        if self.max_sqft is not None:
+            upper_bound = ds.field("in.sqft..ft2") <= self.max_sqft
+            expression = upper_bound if expression is None else expression & upper_bound
+        return expression
 
     def available_states(self) -> list[str]:
         """Return the state abbreviations that have published metadata for this release."""
         prefixes = self._list_common_prefixes(self._metadata_key_prefix)
         return [name.split("=", 1)[1] for name in prefixes if name.startswith("state=")]
-
-    def _apply_sqft_filter(self, meta_df: pd.DataFrame) -> pd.DataFrame:
-        """Filter a metadata DataFrame by `self.min_sqft`/`self.max_sqft` (either or both may be None),
-        using the `in.sqft..ft2` column shared by ComStock and ResStock metadata.
-        """
-        if self.min_sqft is not None:
-            meta_df = meta_df[meta_df["in.sqft..ft2"] >= self.min_sqft]
-        if self.max_sqft is not None:
-            meta_df = meta_df[meta_df["in.sqft..ft2"] <= self.max_sqft]
-        return meta_df
 
     @abstractmethod
     def _metadata_partitions(self) -> list[MetadataPartition]:
@@ -240,14 +247,20 @@ class BuildStockProcessor(ABC):
         raw_dir = save_dir / "raw_metadata" / self._cache_release_label()
         raw_dir.mkdir(parents=True, exist_ok=True)
 
+        filesystem = _s3_filesystem()
+
         def download_partition(partition: MetadataPartition) -> Path | None:
             save_path = raw_dir / self._metadata_partition_cache_name(partition, upgrade)
             if not save_path.exists():
-                partition_url = self._metadata_partition_url(partition, upgrade)
+                s3_path = self._s3_path_from_url(self._metadata_partition_url(partition, upgrade))
                 try:
-                    self.download_file(partition_url, save_path)
-                except requests.RequestException:
-                    tqdm.write(f"Failed to download metadata partition: {partition_url}")
+                    # Read directly via PyArrow's S3 filesystem (parallel range reads, automatic
+                    # retries) rather than a single-shot `requests.get`, then write the resulting table
+                    # back out as our local partition cache file.
+                    table = pq.read_table(s3_path, filesystem=filesystem)
+                    pq.write_table(table, save_path)
+                except OSError:
+                    tqdm.write(f"Failed to download metadata partition: {s3_path}")
                     return None
             return save_path if save_path.exists() else None
 
@@ -264,9 +277,13 @@ class BuildStockProcessor(ABC):
         if not partition_files:
             meta_df = pd.DataFrame()
         else:
-            meta_df = pd.concat((pd.read_parquet(path) for path in partition_files), ignore_index=True)
-            meta_df = self._filter_metadata(meta_df)
-            meta_df = self._apply_sqft_filter(meta_df).reset_index(drop=True)
+            # Read all cached partition files as a single Parquet dataset (instead of looping
+            # pd.read_parquet + pd.concat) so the square-footage filter can be pushed down into the
+            # Parquet reader -- skipping whole row groups outside the requested range where Parquet's own
+            # statistics allow it -- rather than always materializing every row into pandas first.
+            dataset = ds.dataset([str(path) for path in partition_files], format="parquet")
+            meta_df = dataset.to_table(filter=self._sqft_filter_expression()).to_pandas()
+            meta_df = self._filter_metadata(meta_df).reset_index(drop=True)
 
         meta_df.to_csv(output_csv, index=False)
         return meta_df

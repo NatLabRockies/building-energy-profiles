@@ -182,6 +182,56 @@ class TestSummarizeCompositeMetadata:
         with pytest.raises(ValueError, match="Missing target_sqft"):
             summarize_composite_metadata(composite, save_dir=tmp_path, state="DE", target_sqft={("comstock", "MediumOffice"): 100_000.0})
 
+    def test_mixed_product_fraction_mode_scales_multifamily_by_unit_count(self, patch_metadata, tmp_path):
+        """A ResStock component's floor-area share becomes a dwelling-unit count, anchored on the
+        whole-building (ComStock) component's own size -- 50% of a 50,000 sqft office building means 25,000
+        sqft of apartments, i.e. ~27.8 units of 900 sqft, not half of one apartment."""
+        frames, _upgrade_frames, _upgrades_lookup = patch_metadata
+        frames[("comstock", "MediumOffice")] = _office_frame()
+        frames[("resstock", "Multi-Family with 5+ Units")] = _multifamily_frame()
+        composite = CompositeBuildingType.from_fractions(
+            "Half office / half apartments",
+            {("comstock", "MediumOffice"): 0.5, ("resstock", "Multi-Family with 5+ Units"): 0.5},
+        )
+
+        result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE")
+
+        expected_units = (0.5 * 50_000) / 900
+        multifamily = next(c for c in result.components if c.key[0] == "resstock")
+        office = next(c for c in result.components if c.key[0] == "comstock")
+        assert multifamily.unit_multiplier == pytest.approx(expected_units)
+        assert multifamily.avg_sqft == pytest.approx(25_000)
+        assert multifamily.annual_site_energy_kwh == pytest.approx(expected_units * 3_500)
+        assert office.unit_multiplier == pytest.approx(0.5)
+        assert result.weighted_avg_sqft == pytest.approx(50_000)
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.5 * 100_000 + expected_units * 3_500)
+        assert any("dwelling unit" in warning for warning in result.warnings)
+
+    def test_total_sqft_sizes_every_component_to_the_entered_gross_floor_area(self, patch_metadata, tmp_path):
+        frames, _upgrade_frames, _upgrades_lookup = patch_metadata
+        frames[("comstock", "MediumOffice")] = _office_frame()
+        frames[("resstock", "Multi-Family with 5+ Units")] = _multifamily_frame()
+        composite = CompositeBuildingType.from_fractions(
+            "Mixed", {("comstock", "MediumOffice"): 0.5, ("resstock", "Multi-Family with 5+ Units"): 0.5}
+        )
+
+        result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE", total_sqft=200_000.0)
+
+        multifamily = next(c for c in result.components if c.key[0] == "resstock")
+        assert multifamily.unit_multiplier == pytest.approx(100_000 / 900)
+        assert result.weighted_avg_sqft == pytest.approx(200_000)
+
+    def test_all_comstock_fraction_mode_is_unaffected_by_unit_scaling(self, patch_metadata, tmp_path):
+        frames, _upgrade_frames, _upgrades_lookup = patch_metadata
+        frames[("comstock", "MediumOffice")] = _office_frame()
+        frames[("comstock", "RetailStripmall")] = _retail_frame()
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE")
+
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 100_000 + 0.3 * 35_000)
+        assert all(c.unit_multiplier is None for c in result.components)
+
     def test_non_normalized_fractions_raise_in_fraction_mode(self, patch_metadata, tmp_path):
         frames, _upgrade_frames, _upgrades_lookup = patch_metadata
         frames[("comstock", "MediumOffice")] = _office_frame()
@@ -257,9 +307,12 @@ class TestCompareCompositeMeasures:
         )
 
         savings = result.results[ELECTRICITY_TOTAL][0]
-        # The residential component stays at baseline (3,000) since the selection is comstock-only; only
-        # the office component's own value should have changed.
-        assert savings.upgrade_kwh == pytest.approx(0.7 * 60_000 + 0.3 * 3_000)
+        # The residential component stays at baseline (3,000/unit) since the selection is comstock-only;
+        # only the office component's own value should have changed. Mixing products sizes the composite by
+        # floor area, so the multifamily component is 30% of the office-anchored 50,000 sqft / 900 sqft per
+        # unit = ~16.7 dwelling units, not 0.3 of a single apartment.
+        multifamily_units = (0.3 * 50_000) / 900
+        assert savings.upgrade_kwh == pytest.approx(0.7 * 60_000 + multifamily_units * 3_000)
         assert savings.product == "comstock"
 
     def test_empty_comparison_upgrades_raises(self, patch_metadata, tmp_path):

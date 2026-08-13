@@ -15,6 +15,7 @@ from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyS
 from api.services import (
     ServiceError,
     _apply_component_filters,
+    _component_scales,
     _find_column,
     _frame_to_records,
     _resample_hourly,
@@ -281,6 +282,56 @@ class TestApplyComponentFilters:
     def test_filter_excluding_everyone_returns_empty_frame(self):
         result = _apply_component_filters(self._frame(), {"in.vintage": ["Before 1946"]})
         assert result.empty
+
+
+class TestComponentScales:
+    """A ResStock row is one dwelling unit, so mixing products has to size components by floor area and
+    turn the residential share into a unit count -- see composite.resolve_fraction_weights_for().
+    """
+
+    OFFICE = ("comstock", "MediumOffice")
+    MULTIFAMILY = ("resstock", "Multi-Family with 5+ Units")
+
+    def _mixed_components(self) -> list[CompositeComponentSpec]:
+        return [
+            CompositeComponentSpec(product="comstock", building_type="MediumOffice", fraction=0.5),
+            CompositeComponentSpec(product="resstock", building_type="Multi-Family with 5+ Units", fraction=0.5),
+        ]
+
+    @pytest.mark.unit
+    def test_mixed_products_scale_multifamily_by_unit_count(self):
+        scales, area_scaled = _component_scales(self._mixed_components(), {self.OFFICE: 50_000.0, self.MULTIFAMILY: 900.0}, None)
+
+        assert area_scaled
+        assert scales[self.OFFICE] == pytest.approx(0.5)
+        assert scales[self.MULTIFAMILY] == pytest.approx(25_000 / 900)
+
+    @pytest.mark.unit
+    def test_all_comstock_keeps_bare_fractions(self):
+        components = [
+            CompositeComponentSpec(product="comstock", building_type="MediumOffice", fraction=0.7),
+            CompositeComponentSpec(product="comstock", building_type="RetailStripmall", fraction=0.3),
+        ]
+
+        scales, area_scaled = _component_scales(components, {self.OFFICE: 50_000.0, ("comstock", "RetailStripmall"): 20_000.0}, None)
+
+        assert not area_scaled
+        assert scales == {self.OFFICE: 0.7, ("comstock", "RetailStripmall"): 0.3}
+
+    @pytest.mark.unit
+    def test_sqft_mode_scales_to_entered_square_footage(self):
+        target = {self.OFFICE: 100_000.0, self.MULTIFAMILY: 45_000.0}
+
+        scales, area_scaled = _component_scales(self._mixed_components(), {self.OFFICE: 50_000.0, self.MULTIFAMILY: 900.0}, target)
+
+        assert area_scaled
+        assert scales[self.OFFICE] == pytest.approx(2.0)
+        assert scales[self.MULTIFAMILY] == pytest.approx(50.0)
+
+    @pytest.mark.unit
+    def test_sqft_mode_without_a_known_floor_area_raises(self):
+        with pytest.raises(ServiceError, match="Could not determine floor area"):
+            _component_scales(self._mixed_components(), {self.OFFICE: 50_000.0}, {self.OFFICE: 100_000.0, self.MULTIFAMILY: 45_000.0})
 
 
 class TestSqftBoundsWarning:

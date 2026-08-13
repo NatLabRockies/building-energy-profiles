@@ -16,6 +16,7 @@ from building_energy_profiles import (
     combine_composite_time_series,
     find_nearest_sqft_bldg_id,
     pull_composite_time_series,
+    resolve_fraction_weights,
 )
 from building_energy_profiles._base import BuildStockProcessor
 from building_energy_profiles.comstock import ComStockProcessor
@@ -415,6 +416,154 @@ class TestCombineCompositeTimeSeries:
                 component_series,
                 weights={("comstock", "MediumOffice"): 2.0},
             )
+
+    def test_records_the_applied_weights_on_the_result(self):
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+        timestamps = pd.date_range("2018-01-01", periods=4, freq="15min")
+        component_series = {
+            ("comstock", "MediumOffice"): _make_time_series(timestamps, value=100.0),
+            ("comstock", "RetailStripmall"): _make_time_series(timestamps, value=10.0),
+        }
+
+        by_fraction = combine_composite_time_series(composite, component_series)
+        by_weight = combine_composite_time_series(
+            composite, component_series, weights={("comstock", "MediumOffice"): 2.0, ("comstock", "RetailStripmall"): 3.0}
+        )
+
+        assert by_fraction.attrs["component_weights"] == {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3}
+        assert by_weight.attrs["component_weights"] == {("comstock", "MediumOffice"): 2.0, ("comstock", "RetailStripmall"): 3.0}
+
+
+class TestResolveFractionWeights:
+    """Floor-area fractions -> per-component multipliers of each component's own representative building
+    (i.e. a dwelling-unit count for a ResStock component)."""
+
+    def _mixed_composite(self, office_fraction: float = 0.5) -> CompositeBuildingType:
+        return CompositeBuildingType.from_fractions(
+            "Mixed",
+            {
+                ("comstock", "MediumOffice"): office_fraction,
+                ("resstock", "Multi-Family with 5+ Units"): 1 - office_fraction,
+            },
+        )
+
+    def test_anchors_total_floor_area_on_the_whole_building_component(self):
+        composite = self._mixed_composite()
+        component_sqft = {("comstock", "MediumOffice"): 50_000.0, ("resstock", "Multi-Family with 5+ Units"): 900.0}
+
+        weights = resolve_fraction_weights(composite, component_sqft)
+
+        # 50% of the office-anchored 50,000 sqft total = 25,000 sqft of apartments / 900 sqft per unit.
+        assert weights[("comstock", "MediumOffice")] == pytest.approx(0.5)
+        assert weights[("resstock", "Multi-Family with 5+ Units")] == pytest.approx(25_000 / 900)
+
+    def test_explicit_total_sqft_sizes_every_component(self):
+        composite = self._mixed_composite(office_fraction=0.6)
+        component_sqft = {("comstock", "MediumOffice"): 50_000.0, ("resstock", "Multi-Family with 5+ Units"): 900.0}
+
+        weights = resolve_fraction_weights(composite, component_sqft, total_sqft=200_000.0)
+
+        assert weights[("comstock", "MediumOffice")] == pytest.approx(0.6 * 200_000 / 50_000)
+        assert weights[("resstock", "Multi-Family with 5+ Units")] == pytest.approx(0.4 * 200_000 / 900)
+
+    def test_all_comstock_composite_keeps_bare_fractions(self):
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+        component_sqft = {("comstock", "MediumOffice"): 50_000.0, ("comstock", "RetailStripmall"): 20_000.0}
+
+        assert resolve_fraction_weights(composite, component_sqft) is None
+
+    def test_all_resstock_composite_keeps_bare_fractions(self):
+        """Every component is already a dwelling unit, so a per-unit blend is self-consistent and there's
+        no whole-building component to anchor a total floor area on."""
+        composite = CompositeBuildingType.from_fractions(
+            "Mixed",
+            {("resstock", "Multi-Family with 5+ Units"): 0.5, ("resstock", "Single-Family Detached"): 0.5},
+        )
+        component_sqft = {("resstock", "Multi-Family with 5+ Units"): 900.0, ("resstock", "Single-Family Detached"): 2_000.0}
+
+        assert resolve_fraction_weights(composite, component_sqft) is None
+
+    def test_unknown_component_floor_area_raises(self):
+        composite = self._mixed_composite()
+
+        with pytest.raises(ValueError, match="Could not determine floor area"):
+            resolve_fraction_weights(composite, {("comstock", "MediumOffice"): 50_000.0})
+
+    def test_non_normalized_fractions_raise(self):
+        composite = CompositeBuildingType(
+            name="Bad",
+            components=(
+                CompositeComponent(product="comstock", building_type="MediumOffice", fraction=0.5),
+                CompositeComponent(product="resstock", building_type="Multi-Family with 5+ Units", fraction=0.6),
+            ),
+        )
+
+        with pytest.raises(ValueError, match="must sum to 1"):
+            resolve_fraction_weights(composite, {("comstock", "MediumOffice"): 50_000.0, ("resstock", "Multi-Family with 5+ Units"): 900.0})
+
+
+class TestPullCompositeTimeSeriesMixedProducts:
+    """Monkeypatched (no network) coverage of the ComStock + ResStock unit-multiplier weighting."""
+
+    @staticmethod
+    def _patch(monkeypatch: pytest.MonkeyPatch, office_sqft: float, unit_sqft: float) -> None:
+        office_metadata = pd.DataFrame({"bldg_id": [1], "in.state": "DE", "in.sqft": [office_sqft]})
+        multifamily_metadata = pd.DataFrame({"bldg_id": [7, 8], "in.state": "DE", "in.sqft": [unit_sqft, unit_sqft]})
+
+        def fake_process_metadata(self: BuildStockProcessor, save_dir: Path) -> pd.DataFrame:
+            return office_metadata if self.building_type == "MediumOffice" else multifamily_metadata
+
+        def fake_process_building_time_series(
+            self: BuildStockProcessor, data_frame: pd.DataFrame, save_dir: Path
+        ) -> tuple[list[Path], list[str]]:
+            bldg_id = int(data_frame["bldg_id"].iloc[0])
+            save_dir.mkdir(parents=True, exist_ok=True)
+            path = save_dir / f"bldg_{bldg_id}.parquet"
+            value = 100.0 if self.building_type == "MediumOffice" else 10.0
+            pd.DataFrame(
+                {
+                    "bldg_id": bldg_id,
+                    "timestamp": pd.date_range("2018-01-01", periods=4, freq="6h"),
+                    "out.electricity.total.energy_consumption": [value] * 4,
+                }
+            ).to_parquet(path)
+            return [path], [str(bldg_id)]
+
+        monkeypatch.setattr(BuildStockProcessor, "process_metadata", fake_process_metadata)
+        monkeypatch.setattr(BuildStockProcessor, "process_building_time_series", fake_process_building_time_series)
+
+    def test_multifamily_component_is_weighted_by_dwelling_unit_count(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        self._patch(monkeypatch, office_sqft=50_000.0, unit_sqft=900.0)
+        composite = CompositeBuildingType.from_fractions(
+            "Mixed", {("comstock", "MediumOffice"): 0.5, ("resstock", "Multi-Family with 5+ Units"): 0.5}
+        )
+
+        combined, _series = pull_composite_time_series(
+            composite, save_dir=tmp_path, state="DE", value_columns=["out.electricity.total.energy_consumption"]
+        )
+
+        expected_units = (0.5 * 50_000) / 900
+        assert combined["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(0.5 * 100.0 + expected_units * 10.0)
+
+    def test_total_sqft_overrides_the_inferred_gross_floor_area(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        self._patch(monkeypatch, office_sqft=50_000.0, unit_sqft=900.0)
+        composite = CompositeBuildingType.from_fractions(
+            "Mixed", {("comstock", "MediumOffice"): 0.5, ("resstock", "Multi-Family with 5+ Units"): 0.5}
+        )
+
+        combined, _series = pull_composite_time_series(
+            composite,
+            save_dir=tmp_path,
+            state="DE",
+            value_columns=["out.electricity.total.energy_consumption"],
+            total_sqft=200_000.0,
+        )
+
+        expected_office = 0.5 * 200_000 / 50_000
+        expected_units = 0.5 * 200_000 / 900
+        assert combined["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(
+            expected_office * 100.0 + expected_units * 10.0
+        )
 
 
 class TestPullCompositeTimeSeries:
