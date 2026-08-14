@@ -330,6 +330,77 @@ class TestComStockProcessor:
         assert len(paths) == 0
         assert len(building_ids) == 0
 
+    @pytest.mark.unit
+    def testmodel_file_url_formatting(self, sample_processor):
+        """Test that building energy model URLs/filenames are formatted (and zero-padded) correctly."""
+        assert sample_processor.model_file_extension == ".osm.gz"
+
+        # Both the upgrade folder and the upgrade suffix in the filename are zero-padded to two digits.
+        assert sample_processor.model_file_name(1, "0") == "bldg0000001-up00.osm.gz"
+        assert sample_processor.model_file_name(123, "9") == "bldg0000123-up09.osm.gz"
+        assert sample_processor.model_file_name(1234567, "10") == "bldg1234567-up10.osm.gz"
+
+        expected_url = sample_processor.base_url + "building_energy_models/upgrade=00/bldg0000001-up00.osm.gz"
+        assert sample_processor.model_file_url(1, "0") == expected_url
+
+        expected_url_upgrade_10 = sample_processor.base_url + "building_energy_models/upgrade=10/bldg0000001-up10.osm.gz"
+        assert sample_processor.model_file_url(1, "10") == expected_url_upgrade_10
+
+    @pytest.mark.integration
+    def test_download_building_model_single(self, sample_processor):
+        """Test downloading a single building's energy model file."""
+        models_dir = sample_processor.base_dir / "models"
+
+        save_path = sample_processor.download_building_model(1, save_dir=models_dir)
+
+        assert save_path.exists()
+        assert save_path.name == "bldg0000001-up00.osm.gz"
+        assert save_path.stat().st_size > 0
+
+    @pytest.mark.integration
+    def test_download_building_models_small_sample(self, sample_processor):
+        """Test bulk model-file downloading with a small sample of buildings."""
+        metadata_df = sample_processor.process_metadata(save_dir=sample_processor.base_dir)
+        small_sample = metadata_df.head(2)
+
+        models_dir = sample_processor.base_dir / "models_bulk"
+
+        paths, building_ids = sample_processor.download_building_models(small_sample, save_dir=models_dir)
+
+        assert isinstance(paths, list)
+        assert isinstance(building_ids, list)
+        assert len(paths) == len(small_sample)
+        assert len(building_ids) == len(small_sample)
+
+        for path, building_id in zip(paths, building_ids):
+            assert path.exists()
+            assert path.name == f"bldg{int(building_id):07d}-up00.osm.gz"
+            assert path.stat().st_size > 0
+
+    @pytest.mark.integration
+    def test_download_building_model_caching(self, sample_processor):
+        """Test that model-file downloads are cached and reused rather than re-downloaded."""
+        models_dir = sample_processor.base_dir / "models_cache"
+
+        first_path = sample_processor.download_building_model(1, save_dir=models_dir)
+        original_mtime = first_path.stat().st_mtime
+
+        second_path = sample_processor.download_building_model(1, save_dir=models_dir)
+
+        assert first_path == second_path
+        assert second_path.stat().st_mtime == original_mtime
+
+    @pytest.mark.unit
+    def test_download_building_models_empty_dataframe(self, sample_processor):
+        """Test model-file bulk downloading with an empty DataFrame."""
+        models_dir = sample_processor.base_dir / "models_empty"
+
+        empty_df = pd.DataFrame(columns=["bldg_id"])
+        paths, building_ids = sample_processor.download_building_models(empty_df, save_dir=models_dir)
+
+        assert paths == []
+        assert building_ids == []
+
     @pytest.mark.integration
     def test_list_upgrades(self, sample_processor):
         """Test that the upgrade package lookup can be downloaded and parsed."""

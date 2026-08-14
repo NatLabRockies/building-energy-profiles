@@ -112,6 +112,11 @@ class BuildStockProcessor(ABC):
     # tasks mostly wait on network I/O rather than compute.
     IO_WORKERS = 16
 
+    # Set by subclasses as a class attribute: the building energy model file extension published under
+    # `building_energy_models/` -- a gzipped OpenStudio model (".osm.gz") for ComStock, or a zip archive
+    # bundling the OSM with its supporting files (".zip") for ResStock.
+    model_file_extension: str
+
     # Set by subclasses in __init__.
     product_name: str
     base_url: str
@@ -198,6 +203,15 @@ class BuildStockProcessor(ABC):
     @abstractmethod
     def find_upgrade_id(self, save_dir: Path, measure_id: str, target_release: str | None = None) -> str | None:
         """Resolve a stable measure ID to a dataset- and release-specific upgrade ID."""
+
+    @abstractmethod
+    def _model_upgrade_folder(self, upgrade: str) -> str:
+        """Return the `building_energy_models/upgrade=...` folder name published for `upgrade`.
+
+        ComStock zero-pads this to two digits (e.g. "00"); ResStock does not (e.g. "0"). Either way, the
+        *filename* inside that folder always uses a two-digit, zero-padded upgrade id -- see
+        `model_file_name()`.
+        """
 
     def _cache_release_label(self) -> str:
         """Return the release-like label to use in local cache paths."""
@@ -337,5 +351,80 @@ class BuildStockProcessor(ABC):
             results = list(tqdm(executor.map(download_task, data_rows), total=len(data_rows)))
 
         # break out the paths and building_ids
+        paths, building_ids = zip(*results) if results else ([], [])
+        return list(paths), list(building_ids)
+
+    @staticmethod
+    def _model_upgrade_label(upgrade: str) -> str:
+        """The two-digit, zero-padded upgrade id used in every building energy model *filename*,
+        regardless of how the containing `upgrade=...` folder itself is named (see
+        `_model_upgrade_folder()`).
+        """
+        return f"{int(upgrade):02d}"
+
+    def model_file_name(self, building_id: int | str, upgrade: str) -> str:
+        """Return the published building energy model filename for one building/upgrade, e.g.
+        "bldg0000001-up00.osm.gz" (ComStock) or "bldg0000001-up00.zip" (ResStock).
+        """
+        return f"bldg{int(building_id):07d}-up{self._model_upgrade_label(upgrade)}{self.model_file_extension}"
+
+    def model_file_url(self, building_id: int | str, upgrade: str) -> str:
+        """Return the public URL for one building's energy model file."""
+        return f"{self.base_url}building_energy_models/upgrade={self._model_upgrade_folder(upgrade)}/{self.model_file_name(building_id, upgrade)}"
+
+    def download_building_model(self, building_id: int | str, save_dir: Path, upgrade: str | None = None) -> Path:
+        """Download (if needed) one building's energy model file.
+
+        This is a gzipped OpenStudio ".osm.gz" model for ComStock, or a ".zip" archive (bundling the OSM
+        with its supporting files, e.g. schedules) for ResStock -- see `model_file_extension`. Like
+        `process_building_time_series()`, downloaded files are cached locally and reused on subsequent
+        calls.
+
+        Args:
+            building_id: the `bldg_id` from this processor's metadata.
+            save_dir (Path): directory to save the downloaded model file. Created if it doesn't exist.
+            upgrade (str | None): which upgrade's model to download. Defaults to `self.upgrade`.
+
+        Returns:
+            Path: where the model file was (or already had been) saved.
+        """
+        save_dir.mkdir(parents=True, exist_ok=True)
+        upgrade = self.upgrade if upgrade is None else upgrade
+        save_path = save_dir / self.model_file_name(building_id, upgrade)
+        if not save_path.exists():
+            self.download_file(self.model_file_url(building_id, upgrade), save_path)
+        return save_path
+
+    def download_building_models(self, data_frame: pd.DataFrame, save_dir: Path) -> tuple[list[Path], list[str]]:
+        """Download this processor's building energy model file for every building in `data_frame`
+        (typically a `process_metadata()`/`process_building_time_series()` sample), in parallel.
+
+        Mirrors `process_building_time_series()`'s shape and caching behavior, but for the ComStock
+        ".osm.gz" / ResStock ".zip" building energy model files instead of time series data.
+
+        Args:
+            data_frame (pd.DataFrame): rows with at least a `bldg_id` column, e.g. from `process_metadata()`.
+            save_dir (Path): directory to save the downloaded model files. Created if it doesn't exist.
+
+        Returns:
+            tuple[list[Path], list[str]]: the saved file paths and their corresponding building ids, in
+                the same order as `data_frame`.
+        """
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        def download_task(row: pd.Series) -> tuple[Path, str]:
+            building_id = str(row["bldg_id"])
+            return self.download_building_model(building_id, save_dir), building_id
+
+        data_rows = [row for _, row in data_frame.iterrows()]
+        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
+            results = list(
+                tqdm(
+                    executor.map(download_task, data_rows),
+                    total=len(data_rows),
+                    desc=f"Downloading {self.product_name} building energy models",
+                )
+            )
+
         paths, building_ids = zip(*results) if results else ([], [])
         return list(paths), list(building_ids)

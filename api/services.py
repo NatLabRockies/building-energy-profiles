@@ -992,6 +992,20 @@ def list_measures(product: str, settings: Settings, release: str | None = None) 
     )
 
 
+def get_model_download_url(product: str, bldg_id: int, upgrade: str, settings: Settings) -> str:
+    """Return the public OEDI download URL for one building's energy model file -- a gzipped OpenStudio
+    ".osm.gz" model for ComStock, or a ".zip" archive (bundling the OSM with its supporting files) for
+    ResStock. Building energy models aren't partitioned by state/county/building type, so only `product`,
+    `bldg_id`, and `upgrade` are needed to build the URL; nothing is downloaded server-side -- the caller
+    (`GET /api/composite/model-download`) redirects the browser straight to this public S3 URL.
+    """
+    processor = _build_processor(settings.cache_dir, product, settings.default_state, "All", "All", upgrade, None, None)
+    # `_build_processor()`'s building_energy_profiles-derived return type isn't seen as fully typed by mypy
+    # (no py.typed marker), same pre-existing gap already visible elsewhere in this module -- str(...)
+    # keeps this new, plain-`str`-returning function itself clean rather than leaking that Any through.
+    return str(processor.model_file_url(bldg_id, upgrade))
+
+
 def list_available_states(product: str, settings: Settings, release: str | None = None) -> AvailableStatesResponse:
     """List every 2-letter state abbreviation with published metadata for `product`, for a state dropdown."""
     try:

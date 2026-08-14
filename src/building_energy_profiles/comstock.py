@@ -42,6 +42,8 @@ class ComStockProcessor(BuildStockProcessor):
     building_types = COMSTOCK_BUILDING_TYPES
     result_variables = COMSTOCK_RESULT_VARIABLES
     measure_upgrade_packages = COMSTOCK_MEASURE_UPGRADE_PACKAGES
+    # ComStock publishes gzipped OpenStudio models, e.g. "bldg0000001-up00.osm.gz".
+    model_file_extension = ".osm.gz"
 
     def __init__(
         self,
@@ -140,6 +142,10 @@ class ComStockProcessor(BuildStockProcessor):
         if self.building_type != "All":
             meta_df = meta_df[meta_df["in.comstock_building_type"] == self.building_type]
         return meta_df
+
+    def _model_upgrade_folder(self, upgrade: str) -> str:
+        # ComStock's building_energy_models/ is partitioned as upgrade=00, upgrade=01, ..., upgrade=10, ...
+        return f"{int(upgrade):02d}"
 
     def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
         """Download (if needed) and return the measure name crosswalk for this release.

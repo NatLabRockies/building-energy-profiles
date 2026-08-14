@@ -5,7 +5,7 @@ import { ChartConfiguration } from 'chart.js';
 
 import { ApiService } from '../../services/api.service';
 import { CompositeStateService } from '../../services/composite-state.service';
-import { MetadataSummaryResponse } from '../../models/api.models';
+import { ComponentSummary, MetadataSummaryResponse } from '../../models/api.models';
 import { CHART_COLORS } from '../../models/chart-colors';
 import { ChartComponent } from '../chart/chart.component';
 
@@ -98,5 +98,15 @@ export class DashboardComponent implements OnInit {
         backgroundColor: CHART_COLORS[i % CHART_COLORS.length],
       })),
     };
+  }
+
+  /** URL for downloading a component's pinned building's energy model file (ComStock ".osm.gz" model or
+   * ResStock ".zip" archive) -- `null` if this component has no pinned building yet (see "Select
+   * Buildings"). Meant to be used directly as a link `href`, not fetched via HttpClient. */
+  modelDownloadUrl(component: ComponentSummary): string | null {
+    if (component.selected_bldg_id == null) {
+      return null;
+    }
+    return this.api.getModelDownloadUrl(component.product, component.selected_bldg_id, this.compositeState.upgrade());
   }
 }

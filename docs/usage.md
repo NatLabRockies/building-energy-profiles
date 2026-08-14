@@ -151,6 +151,31 @@ for path, building_id in zip(paths, building_ids):
 
 The downloader caches files by building ID and upgrade. Existing files are reused.
 
+## Download Building Energy Models
+
+Each sampled building also has a published energy model file on the OEDI data lake -- a gzipped OpenStudio
+`.osm.gz` model for ComStock, or a `.zip` archive (bundling the OSM with its supporting files) for ResStock.
+`download_building_models()` mirrors `process_building_time_series()`'s shape and caching behavior for these:
+
+```python
+models_dir = comstock_dir / "models"
+models_dir.mkdir(parents=True, exist_ok=True)
+
+paths, building_ids = comstock_processor.download_building_models(
+    selected,
+    save_dir=models_dir,
+)
+```
+
+To download just one building's model without a metadata DataFrame, use `download_building_model()`:
+
+```python
+model_path = comstock_processor.download_building_model(building_id=12345, save_dir=models_dir)
+```
+
+`model_file_url()`/`model_file_name()` build the underlying OEDI URL/filename without downloading anything,
+if you just need the link (e.g. to hand off to another tool).
+
 ## Normalize Time-Series Columns
 
 Published ComStock and ResStock time-series schemas are similar but not identical. In currently supported releases,

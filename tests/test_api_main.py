@@ -44,6 +44,7 @@ class TestAppRoutes:
             "/api/locations/counties",
             "/api/measures/compare",
             "/api/export/mos",
+            "/api/composite/model-download",
         }.issubset(paths)
 
     @pytest.mark.unit
@@ -92,6 +93,41 @@ class TestAppRoutes:
     @pytest.mark.unit
     def test_measures_rejects_unknown_product(self, client: TestClient) -> None:
         response = client.get("/api/measures", params={"product": "not-a-product"})
+
+        assert response.status_code == 422
+
+    @pytest.mark.unit
+    def test_model_download_redirects_to_comstock_url(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/composite/model-download",
+            params={"product": "comstock", "bldg_id": 1, "upgrade": "0"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code in (302, 307)
+        assert response.headers["location"].endswith("building_energy_models/upgrade=00/bldg0000001-up00.osm.gz")
+
+    @pytest.mark.unit
+    def test_model_download_redirects_to_resstock_url(self, client: TestClient) -> None:
+        response = client.get(
+            "/api/composite/model-download",
+            params={"product": "resstock", "bldg_id": 1, "upgrade": "5"},
+            follow_redirects=False,
+        )
+
+        assert response.status_code in (302, 307)
+        # ResStock's upgrade folder isn't zero-padded, unlike the "-up05" filename suffix.
+        assert response.headers["location"].endswith("building_energy_models/upgrade=5/bldg0000001-up05.zip")
+
+    @pytest.mark.unit
+    def test_model_download_rejects_unknown_product(self, client: TestClient) -> None:
+        response = client.get("/api/composite/model-download", params={"product": "not-a-product", "bldg_id": 1})
+
+        assert response.status_code == 422
+
+    @pytest.mark.unit
+    def test_model_download_rejects_non_positive_bldg_id(self, client: TestClient) -> None:
+        response = client.get("/api/composite/model-download", params={"product": "comstock", "bldg_id": 0})
 
         assert response.status_code == 422
 

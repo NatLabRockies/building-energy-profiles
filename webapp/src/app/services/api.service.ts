@@ -86,4 +86,13 @@ export class ApiService {
   exportMos(request: MosExportRequest): Observable<Blob> {
     return this.http.post(`${this.baseUrl}/export/mos`, request, { responseType: 'blob' });
   }
+
+  /** URL for one building's energy model file -- a gzipped OpenStudio ".osm.gz" model for ComStock, or a
+   * ".zip" archive (bundling the OSM with its supporting files) for ResStock. `GET`-ing this URL 307s
+   * straight to the public OEDI download, so it's meant to be used as a plain link `href` (opened in a new
+   * tab) rather than fetched via HttpClient. */
+  getModelDownloadUrl(product: Product, bldgId: number, upgrade: string): string {
+    const params = new HttpParams().set('product', product).set('bldg_id', bldgId).set('upgrade', upgrade);
+    return `${this.baseUrl}/composite/model-download?${params.toString()}`;
+  }
 }

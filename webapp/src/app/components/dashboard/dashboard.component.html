@@ -78,7 +78,10 @@
     <p class="intro">
       "Sample avg" columns are averaged across every building sampled for that type/location -- "Selected
       bldg" columns are the one specific building pinned on the
-      <a routerLink="/select-buildings">Select Buildings</a> page, if any.
+      <a routerLink="/select-buildings">Select Buildings</a> page, if any. "Model" downloads that pinned
+      building's energy model file directly from the public OEDI data lake -- a gzipped OpenStudio
+      ".osm.gz" model for ComStock, or a ".zip" archive for ResStock -- and is only available once a
+      building is pinned for that component.
       @if (hasUnitMultipliers()) {
         Because this composite mixes ComStock (whole-building) and/or sqft-targeted components, "Units
         represented" shows how many of each component's representative building/dwelling unit its floor-area
@@ -99,6 +102,7 @@
           <th>Sample avg. annual energy (kWh)</th>
           <th>Selected bldg_id</th>
           <th>Selected bldg Site EUI (kBtu/ft&sup2;)</th>
+          <th>Model</th>
         </tr>
       </thead>
       <tbody>
@@ -121,6 +125,16 @@
             <td>{{ c.annual_site_energy_kwh | number: '1.0-0' }}</td>
             <td>{{ c.selected_bldg_id ?? '—' }}</td>
             <td>{{ c.selected_site_eui_kbtu_per_ft2 != null ? (c.selected_site_eui_kbtu_per_ft2 | number: '1.1-1') : '—' }}</td>
+            <td>
+              @if (modelDownloadUrl(c); as url) {
+                <a [href]="url" target="_blank" rel="noopener" class="model-download-link"
+                  [title]="c.product === 'resstock' ? 'Download the .zip building energy model archive' : 'Download the .osm.gz building energy model'">
+                  Download model
+                </a>
+              } @else {
+                &mdash;
+              }
+            </td>
           </tr>
         }
       </tbody>
