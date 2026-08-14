@@ -26,8 +26,10 @@ export class CompositeBuilderComponent implements OnInit {
   errorMessage = signal<string | null>(null);
   /** 'fraction': each row's amount is a floor-area percentage (must total 100%). 'sqft': each row's amount
    * is an absolute square footage (any total; results are scaled to represent a building of that exact
-   * combined size instead of just a relative share). */
-  mode = signal<'fraction' | 'sqft'>('fraction');
+   * combined size instead of just a relative share). Defaults to 'sqft' so the default composite (a
+   * 10,000 sqft office + a 50,000 sqft multifamily building) represents two actual, differently-sized
+   * buildings rather than a relative mix. */
+  mode = signal<'fraction' | 'sqft'>('sqft');
 
   /** States with published BuildStock metadata (comstock/resstock cover the same 50 states + DC, so
    * "comstock" is used as the reference product for this list). */
@@ -49,8 +51,8 @@ export class CompositeBuilderComponent implements OnInit {
     private readonly router: Router,
   ) {
     this.form = this.fb.group({
-      rows: this.fb.array([this.buildRow('Office', 100)]),
-      state: ['DE', [Validators.required, Validators.pattern(/^[A-Za-z]{2}$/)]],
+      rows: this.fb.array([this.buildRow('Office', 10_000), this.buildRow('Multifamily Housing', 50_000)]),
+      state: ['CO', [Validators.required, Validators.pattern(/^[A-Za-z]{2}$/)]],
       countyName: ['All'],
     });
   }

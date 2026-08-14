@@ -185,6 +185,12 @@ export interface MeasuresCompareRequest extends CompositeRequestBase {
    * conflated in a mixed composite. */
   comparison_upgrades: string[];
   columns?: string[] | null;
+  /** When true, also compute an IQR-based uncertainty range for every value (see `MeasureSavings`), from
+   * the population of sampled buildings near each component's pinned building. Off by default. */
+  include_uncertainty?: boolean;
+  /** +/- percentile points (of site EUI) around each component's pinned building defining its "nearby
+   * population" for `include_uncertainty`. Defaults to 10 (backend default) if omitted. */
+  uncertainty_band?: number;
 }
 
 export interface MeasureSavings {
@@ -195,6 +201,13 @@ export interface MeasureSavings {
   upgrade_kwh: number;
   absolute_savings_kwh: number;
   pct_savings: number | null;
+  /** [low, high] uncertainty ranges -- only populated when the request set `include_uncertainty: true`.
+   * See api/schemas.py's `MeasureSavings` docstring for how these are computed (an IQR-based
+   * "population of buildings near the building selected" band, combined across composite components). */
+  baseline_kwh_iqr?: [number, number] | null;
+  upgrade_kwh_iqr?: [number, number] | null;
+  absolute_savings_kwh_iqr?: [number, number] | null;
+  pct_savings_iqr?: [number, number] | null;
 }
 
 export interface MeasuresCompareResponse {

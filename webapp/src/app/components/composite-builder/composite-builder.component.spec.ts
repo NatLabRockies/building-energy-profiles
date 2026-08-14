@@ -47,14 +47,39 @@ describe('CompositeBuilderComponent', () => {
     return component.rows.controls.map((row) => Number(row.get('amount')?.value));
   }
 
-  it('starts with a single row at 100%', () => {
+  /** Force the component into a known single-row state for a given mode/amount -- the rebalancing tests
+   * below are about the rebalancing *logic*, not about whatever the production default composite happens
+   * to be (a 10,000 sqft office + 50,000 sqft multifamily, see the dedicated "default composite" test),
+   * so they set up their own starting point rather than relying on it. Manipulates the FormArray/mode
+   * signal directly (bypassing removeRow()/setMode()'s own rebalancing side effects) for a clean slate. */
+  function resetToSingleRow(component: CompositeBuilderComponent, mode: 'fraction' | 'sqft', amount: number): void {
+    while (component.rows.length > 1) {
+      component.rows.removeAt(component.rows.length - 1);
+    }
+    component.mode.set(mode);
+    component.rows.at(0).get('amount')?.setValue(amount);
+  }
+
+  it('defaults to a 10,000 sqft office + 50,000 sqft multifamily composite in Colorado', () => {
     const component = createComponent();
+
+    expect(component.mode()).toBe('sqft');
+    expect(component.rows.at(0).get('energyStarType')?.value).toBe('Office');
+    expect(component.rows.at(1).get('energyStarType')?.value).toBe('Multifamily Housing');
+    expect(amounts(component)).toEqual([10_000, 50_000]);
+    expect(component.form.get('state')?.value).toBe('CO');
+  });
+
+  it('starts with a single row at 100% (fraction mode)', () => {
+    const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     expect(amounts(component)).toEqual([100]);
     expect(component.amountTotal).toBe(100);
   });
 
   it('addRow() splits the total evenly and keeps the sum at 100%', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow();
     expect(amounts(component)).toEqual([50, 50]);
     expect(component.amountTotal).toBe(100);
@@ -62,6 +87,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('addRow() a third time preserves the existing rows relative shares', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow(); // 50/50
     component.rows.at(0).get('amount')?.setValue(70);
     component.onAmountChanged(0); // 70/30
@@ -75,6 +101,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('removeRow() rescales the remaining rows to sum back to 100%, preserving their ratio', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow();
     component.rows.at(0).get('amount')?.setValue(60);
     component.onAmountChanged(0); // 60/40
@@ -88,6 +115,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('removing down to a single row makes it 100%', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow();
     component.removeRow(1);
     expect(amounts(component)).toEqual([100]);
@@ -95,6 +123,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('onAmountChanged() rescales the other rows proportionally to keep the total at 100%', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow(); // 50/50
     component.addRow(); // ~33.3/33.3/33.4
 
@@ -109,6 +138,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('onAmountChanged() splits evenly among other rows that are currently at 0%', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow();
     component.addRow(); // 3 rows summing to 100
 
@@ -127,6 +157,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('clamps an edited value above 100 down to 100, zeroing the other rows', () => {
     const component = createComponent();
+    resetToSingleRow(component, 'fraction', 100);
     component.addRow();
     component.rows.at(0).get('amount')?.setValue(150);
     component.onAmountChanged(0);
@@ -138,7 +169,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('does not rebalance in sqft mode', () => {
     const component = createComponent();
-    component.setMode('sqft');
+    resetToSingleRow(component, 'sqft', 100_000);
     component.addRow();
     component.rows.at(0).get('amount')?.setValue(40_000);
     component.onAmountChanged(0);
@@ -150,7 +181,7 @@ describe('CompositeBuilderComponent', () => {
 
   it('normalizes leftover sqft-mode values proportionally when switching back to fraction mode', () => {
     const component = createComponent();
-    component.setMode('sqft');
+    resetToSingleRow(component, 'sqft', 100_000);
     component.addRow();
     component.rows.at(0).get('amount')?.setValue(40_000);
     component.onAmountChanged(0);

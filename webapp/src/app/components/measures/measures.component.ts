@@ -56,6 +56,10 @@ export class MeasuresComponent implements OnInit {
    * the first. Kept separate from selectedKeys() so toggling checkboxes after comparing doesn't change
    * what's shown until the user re-compares. */
   comparedKeys = signal<string[]>([]);
+  /** When on, compare() requests an IQR-based uncertainty range for every savings value (see
+   * MeasureSavings.absolute_savings_kwh_iqr etc.) -- shown as extra grid columns and error bars on the
+   * savings chart. Off by default since it costs extra computation the user may not need. */
+  showUncertainty = signal(false);
 
   savingsChartData?: ChartConfiguration<'bar'>['data'];
   loadDurationChartData?: ChartConfiguration<'line'>['data'];
@@ -63,7 +67,7 @@ export class MeasuresComponent implements OnInit {
   readonly barOptions: ChartConfiguration<'bar'>['options'] = {
     responsive: true,
     maintainAspectRatio: false,
-    plugins: { legend: { display: false } },
+    plugins: { legend: { display: true } },
     scales: { y: { title: { display: true, text: 'Savings vs. baseline (kWh)' } } },
   };
   readonly lineOptions: ChartConfiguration<'line'>['options'] = {
@@ -99,7 +103,13 @@ export class MeasuresComponent implements OnInit {
   // AG Grid setup for the savings comparison table. `themeMaterial` keeps the grid's look
   // consistent with the rest of the app now that Angular Material is the base component library.
   readonly gridTheme = themeMaterial;
-  readonly defaultColDef: ColDef = { sortable: true, resizable: true, filter: true };
+  readonly defaultColDef: ColDef = {
+    sortable: true,
+    resizable: true,
+    filter: true,
+    cellStyle: { textAlign: 'center' },
+    headerClass: 'centered-header',
+  };
   readonly savingsColDefs: ColDef<MeasureSavings>[] = [
     {
       headerName: 'Measure',
@@ -120,26 +130,30 @@ export class MeasuresComponent implements OnInit {
       headerName: 'Baseline (kWh)',
       field: 'baseline_kwh',
       type: 'numericColumn',
-      valueFormatter: (p) => this.formatKwh(p.value),
+      minWidth: 170,
+      valueFormatter: (p) => this.formatKwhWithIqr(p.value, p.data?.baseline_kwh_iqr),
     },
     {
       headerName: 'Upgrade (kWh)',
       field: 'upgrade_kwh',
       type: 'numericColumn',
-      valueFormatter: (p) => this.formatKwh(p.value),
+      minWidth: 170,
+      valueFormatter: (p) => this.formatKwhWithIqr(p.value, p.data?.upgrade_kwh_iqr),
     },
     {
       headerName: 'Savings (kWh)',
       field: 'absolute_savings_kwh',
       type: 'numericColumn',
-      valueFormatter: (p) => this.formatKwh(p.value),
+      minWidth: 170,
+      valueFormatter: (p) => this.formatKwhWithIqr(p.value, p.data?.absolute_savings_kwh_iqr),
       cellClassRules: { error: (p) => (p.value ?? 0) < 0 },
     },
     {
       headerName: 'Savings (%)',
       field: 'pct_savings',
       type: 'numericColumn',
-      valueFormatter: (p) => (p.value == null ? '' : `${p.value.toFixed(1)}%`),
+      minWidth: 150,
+      valueFormatter: (p) => this.formatPctWithIqr(p.value, p.data?.pct_savings_iqr),
       cellClassRules: { error: (p) => (p.value ?? 0) < 0 },
     },
   ];
@@ -149,6 +163,32 @@ export class MeasuresComponent implements OnInit {
 
   private formatKwh(value: number | null | undefined): string {
     return value == null ? '' : Math.round(value).toLocaleString('en-US');
+  }
+
+  /** `"135,419 (\u00b1 33,458)"` when an IQR-based uncertainty range is present (see
+   * MeasureSavings.baseline_kwh_iqr etc.) -- the range is already centered on `value` (see
+   * `compare_measures`'s `_combine_half_iqr`), so its half-width is a single `\u00b1` figure. Just the
+   * plain formatted value with no uncertainty requested/available. */
+  private formatKwhWithIqr(value: number | null | undefined, iqr: [number, number] | null | undefined): string {
+    const formatted = this.formatKwh(value);
+    if (value == null || iqr == null) {
+      return formatted;
+    }
+    const halfWidth = (iqr[1] - iqr[0]) / 2;
+    return `${formatted} (\u00b1${this.formatKwh(halfWidth)})`;
+  }
+
+  /** Percent-savings counterpart of `formatKwhWithIqr()`. */
+  private formatPctWithIqr(value: number | null | undefined, iqr: [number, number] | null | undefined): string {
+    if (value == null) {
+      return '';
+    }
+    const formatted = `${value.toFixed(1)}%`;
+    if (iqr == null) {
+      return formatted;
+    }
+    const halfWidth = (iqr[1] - iqr[0]) / 2;
+    return `${formatted} (\u00b1${halfWidth.toFixed(1)}%)`;
   }
 
   constructor(
@@ -255,6 +295,7 @@ export class MeasuresComponent implements OnInit {
         county_name: this.compositeState.countyName(),
         baseline_upgrade: this.baselineUpgrade,
         comparison_upgrades: selectionKeys,
+        include_uncertainty: this.showUncertainty(),
       })
       .subscribe({
         next: (result) => {
@@ -378,15 +419,26 @@ export class MeasuresComponent implements OnInit {
       this.savingsChartData = undefined;
       return;
     }
-    this.savingsChartData = {
-      labels: savings.map((s) => s.name ?? s.upgrade_id),
-      datasets: [
-        {
-          label: 'Site energy savings (kWh)',
-          data: savings.map((s) => Math.round(s.absolute_savings_kwh)),
-          backgroundColor: savings.map((s) => (s.absolute_savings_kwh >= 0 ? '#16a34a' : '#dc2626')),
-        },
-      ],
-    };
+    const datasets: NonNullable<ChartConfiguration<'bar'>['data']>['datasets'] = [
+      {
+        label: 'Site energy savings (kWh)',
+        data: savings.map((s) => Math.round(s.absolute_savings_kwh)),
+        backgroundColor: savings.map((s) => (s.absolute_savings_kwh >= 0 ? '#16a34a' : '#dc2626')),
+        order: 2,
+      },
+    ];
+    // A floating bar (Chart.js renders a [low, high] data pair as a bar spanning that range, rather than
+    // from 0) drawn behind the point-estimate bar -- a simple, dependency-free "error bar" look for the
+    // IQR-based uncertainty range, only shown when the user has opted into it and it's actually present.
+    if (this.showUncertainty() && savings.some((s) => s.absolute_savings_kwh_iqr)) {
+      datasets.push({
+        label: 'Uncertainty (IQR)',
+        data: savings.map((s) => (s.absolute_savings_kwh_iqr ? [Math.round(s.absolute_savings_kwh_iqr[0]), Math.round(s.absolute_savings_kwh_iqr[1])] : [0, 0])),
+        backgroundColor: 'rgba(100, 116, 139, 0.35)',
+        barThickness: 10,
+        order: 1,
+      });
+    }
+    this.savingsChartData = { labels: savings.map((s) => s.name ?? s.upgrade_id), datasets };
   }
 }

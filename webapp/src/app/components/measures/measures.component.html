@@ -68,6 +68,19 @@
       }
     </div>
 
+    <label class="uncertainty-toggle">
+      <input type="checkbox" [checked]="showUncertainty()" (change)="showUncertainty.set(!showUncertainty())" />
+      Show uncertainty (IQR)
+    </label>
+    @if (showUncertainty()) {
+      <p class="chart-note">
+        Each value's uncertainty range is the interquartile range (25th-75th percentile) of the population
+        of sampled buildings near each component's selected building (its whole sample if none is
+        selected), combined across composite components -- a robust, real building-to-building variability
+        estimate, not simulation error.
+      </p>
+    }
+
     <button class="primary" (click)="compare()" [disabled]="comparing() || selectedKeys().size === 0">
       {{ comparing() ? 'Comparing...' : 'Compare selected measures' }}
     </button>

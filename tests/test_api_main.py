@@ -725,6 +725,95 @@ class TestAppEndpointsIntegration:
         assert "SmallOffice" in body["warnings"][0]
 
     @pytest.mark.integration
+    def test_measures_compare_uncertainty_omitted_by_default(self, client: TestClient) -> None:
+        """`include_uncertainty` defaults to false, so the IQR fields should stay `None` -- existing
+        callers that don't know about the feature see no change in the response shape."""
+        response = client.post(
+            "/api/measures/compare",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+                "baseline_upgrade": "0",
+                "comparison_upgrades": ["1"],
+            },
+        )
+
+        assert response.status_code == 200
+        entry = response.json()["results"]["out.site_energy.total.energy_consumption"][0]
+        assert entry["baseline_kwh_iqr"] is None
+        assert entry["absolute_savings_kwh_iqr"] is None
+        assert entry["pct_savings_iqr"] is None
+
+    @pytest.mark.integration
+    def test_measures_compare_uncertainty_populates_iqr_ranges(self, client: TestClient) -> None:
+        """`include_uncertainty=True` should populate every IQR range, each straddling its point estimate."""
+        response = client.post(
+            "/api/measures/compare",
+            json={
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}],
+                "state": "DE",
+                "baseline_upgrade": "0",
+                "comparison_upgrades": ["1"],
+                "include_uncertainty": True,
+            },
+        )
+
+        assert response.status_code == 200
+        entry = response.json()["results"]["out.site_energy.total.energy_consumption"][0]
+        assert entry["baseline_kwh_iqr"][0] < entry["baseline_kwh"] < entry["baseline_kwh_iqr"][1]
+        assert entry["upgrade_kwh_iqr"][0] < entry["upgrade_kwh"] < entry["upgrade_kwh_iqr"][1]
+        assert entry["absolute_savings_kwh_iqr"][0] < entry["absolute_savings_kwh"] < entry["absolute_savings_kwh_iqr"][1]
+        assert entry["pct_savings_iqr"][0] < entry["pct_savings"] < entry["pct_savings_iqr"][1]
+
+    @pytest.mark.integration
+    def test_measures_compare_uncertainty_narrower_with_pinned_bldg_id(self, client: TestClient) -> None:
+        """Pinning a representative building should narrow the uncertainty band vs. using the whole
+        population -- the neighborhood around one specific building is a subset of every building."""
+        column = "out.site_energy.total.energy_consumption"
+        base_payload: dict[str, Any] = {
+            "state": "DE",
+            "baseline_upgrade": "0",
+            "comparison_upgrades": ["1"],
+            "include_uncertainty": True,
+        }
+
+        unpinned = client.post(
+            "/api/measures/compare",
+            json={**base_payload, "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}]},
+        )
+        assert unpinned.status_code == 200
+        unpinned_entry = unpinned.json()["results"][column][0]
+
+        # Pin a real bldg_id from this component's population -- fetched via metadata/summary rather than
+        # hardcoding one, since the exact set of sampled bldg_ids can shift with the underlying release.
+        summary = client.post(
+            "/api/metadata/summary",
+            json={"components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}], "state": "DE"},
+        )
+        assert summary.status_code == 200
+
+        distribution = client.post(
+            "/api/composite/building-distribution",
+            json={"components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0}], "state": "DE"},
+        )
+        assert distribution.status_code == 200
+        bldg_id = distribution.json()["distributions"][0]["percentile_buildings"]["median"]["bldg_id"]
+
+        pinned = client.post(
+            "/api/measures/compare",
+            json={
+                **base_payload,
+                "components": [{"product": "comstock", "building_type": "SmallOffice", "fraction": 1.0, "bldg_id": bldg_id}],
+            },
+        )
+        assert pinned.status_code == 200
+        pinned_entry = pinned.json()["results"][column][0]
+
+        unpinned_width = unpinned_entry["baseline_kwh_iqr"][1] - unpinned_entry["baseline_kwh_iqr"][0]
+        pinned_width = pinned_entry["baseline_kwh_iqr"][1] - pinned_entry["baseline_kwh_iqr"][0]
+        assert pinned_width < unpinned_width
+
+    @pytest.mark.integration
     def test_export_mos_returns_downloadable_file(self, client: TestClient) -> None:
         response = client.post(
             "/api/export/mos",

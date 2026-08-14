@@ -113,6 +113,10 @@
   --ag-border-radius: 8px;
   --ag-font-size: 0.85rem;
 
+  ::ng-deep .centered-header .ag-header-cell-label {
+    justify-content: center;
+  }
+
   ::ng-deep .product-badge {
     display: flex;
     align-items: center;
@@ -145,4 +149,13 @@
   color: var(--color-muted);
   font-size: 0.85rem;
   max-width: 70ch;
+}
+
+.uncertainty-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  margin: 0.5rem 0;
+  font-size: 0.9rem;
+  cursor: pointer;
 }

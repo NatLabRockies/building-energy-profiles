@@ -108,12 +108,31 @@ class TestSelectBuildingConditionSample:
             result.metric_medians[ENERGY_COLUMN] * 0.8
         )
 
+    def test_metric_iqr_matches_manual_band_selection(self):
+        frame = _uniform_eui_frame(n=100)
+
+        result = select_building_condition_sample(frame, percentile=50, band=5)
+
+        # Band is energy 45..54 (see test_metric_medians_and_ranges_match_manual_band_selection).
+        expected = pd.Series(range(45, 55))
+        assert result.metric_iqr[ENERGY_COLUMN] == pytest.approx((expected.quantile(0.25), expected.quantile(0.75)))
+
+    def test_metric_iqr_is_within_metric_range(self):
+        frame = _uniform_eui_frame(n=100)
+
+        result = select_building_condition_sample(frame, percentile=50, band=5)
+
+        low, high = result.metric_iqr[ENERGY_COLUMN]
+        range_low, range_high = result.metric_ranges[ENERGY_COLUMN]
+        assert range_low <= low <= high <= range_high
+
     def test_missing_metric_column_is_silently_skipped(self):
         frame = _uniform_eui_frame(n=100)
 
         result = select_building_condition_sample(frame, percentile=50, band=5, metric_columns=["out.does_not_exist"])
 
         assert "out.does_not_exist" not in result.metric_medians
+        assert "out.does_not_exist" not in result.metric_iqr
         assert "out.does_not_exist" not in result.metric_ranges
 
     def test_tolerates_annual_metadata_unit_suffix(self):

@@ -16,6 +16,10 @@ percentile points) around the target instead of trying to find one exact match:
 - The band's per-metric **min/max range** becomes an error range -- how much buildings *within the same
   condition band* still vary from each other, distinct from (and typically narrower than) the full sample's
   spread.
+- The band's per-metric **interquartile range (25th/75th percentile)** is also reported (`metric_iqr`) -- a
+  more robust ("outlier-resistant") uncertainty band than the bare min/max, and what `api/services.py`'s
+  `compare_measures` uses (via `uncertainty_band`/`include_uncertainty`) to show a measure's estimated
+  savings with an uncertainty range instead of a single point estimate.
 - The band's median-EUI building's own `bldg_id` is surfaced as a single representative building, e.g. for
   pulling one actual time series to display (see `composite.pull_composite_time_series`'s
   `building_condition` parameter).
@@ -64,6 +68,12 @@ class BuildingConditionSelection:
     """column -> median value across the selected band, for every requested metric column."""
     metric_ranges: dict[str, tuple[float, float]] = field(default_factory=dict)
     """column -> (min, max) across the selected band -- the error range for that metric."""
+    metric_iqr: dict[str, tuple[float, float]] = field(default_factory=dict)
+    """column -> (25th percentile, 75th percentile) across the selected band -- a robust (outlier-
+    resistant) uncertainty range for "how much do buildings near this one actually vary", distinct from
+    `metric_ranges`'s bare min/max (which chases the band's most extreme members). See `api/services.py`'s
+    `compare_measures` for how this is combined across composite components into a portfolio-level
+    uncertainty band for a measure's estimated savings."""
 
 
 def _find_column(columns: pd.Index, prefix: str) -> str | None:
@@ -144,6 +154,7 @@ def select_building_condition_sample(
     requested_columns = [energy_column, *(metric_columns or [])]
     metric_medians: dict[str, float] = {}
     metric_ranges: dict[str, tuple[float, float]] = {}
+    metric_iqr: dict[str, tuple[float, float]] = {}
     for requested in dict.fromkeys(requested_columns):  # de-dupe, preserving order
         matched = requested if requested in selected.columns else _find_column(selected.columns, requested)
         if not matched:
@@ -153,6 +164,7 @@ def select_building_condition_sample(
             continue
         metric_medians[requested] = float(series.median())
         metric_ranges[requested] = (float(series.min()), float(series.max()))
+        metric_iqr[requested] = (float(series.quantile(0.25)), float(series.quantile(0.75)))
 
     return BuildingConditionSelection(
         percentile=percentile,
@@ -164,6 +176,7 @@ def select_building_condition_sample(
         median_bldg_id=int(median_row[bldg_id_column]),
         eui_kbtu_per_ft2_median=eui_median,
         metric_medians=metric_medians,
+        metric_iqr=metric_iqr,
         metric_ranges=metric_ranges,
     )
 
