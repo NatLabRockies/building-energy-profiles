@@ -272,6 +272,15 @@ class MeasuresCompareRequest(CompositeRequestBase):
     webapp always sends prefixed entries so mixed commercial/residential composites can't accidentally
     conflate two unrelated measures that happen to share a numeric id."""
     columns: list[str] | None = None
+    include_uncertainty: bool = False
+    """When true, also compute an IQR-based uncertainty range (see `MeasureSavings`) for every value,
+    from the population of sampled buildings near each component's pinned building (or the whole sample,
+    for a component with no pinned building) -- off by default since it costs extra computation and most
+    callers just want the point estimate."""
+    uncertainty_band: float = Field(default=10.0, gt=0.0, le=50.0)
+    """+/- percentile points (of site EUI) around each component's pinned building used to define its
+    "nearby population" for `include_uncertainty` -- see `building_condition.select_building_condition_sample`.
+    Ignored if `include_uncertainty` is false."""
 
 
 class MeasureSavings(BaseModel):
@@ -284,6 +293,23 @@ class MeasureSavings(BaseModel):
     absolute_savings_kwh: float
     """baseline_kwh - upgrade_kwh: positive means the measure saves energy, negative means it increases it."""
     pct_savings: float | None
+    baseline_kwh_iqr: tuple[float, float] | None = None
+    upgrade_kwh_iqr: tuple[float, float] | None = None
+    absolute_savings_kwh_iqr: tuple[float, float] | None = None
+    pct_savings_iqr: tuple[float, float] | None = None
+    """(low, high) uncertainty ranges, only populated when the request set `include_uncertainty=True`.
+
+    Each component's own uncertainty is the interquartile range (25th-75th percentile) of the requested
+    metric across the sampled buildings within `uncertainty_band` percentile points of that component's own
+    site EUI rank (its whole sample if no building is pinned) -- see
+    `building_energy_profiles.building_condition.select_building_condition_sample`. Composite components are
+    then combined assuming independence between components: each component's half-IQR is converted to an
+    implied standard deviation (an IQR spans ~1.349 standard deviations for a roughly-normal distribution),
+    variances are summed across components (and, for `absolute_savings_kwh_iqr`, between baseline and
+    upgrade), and the combined standard deviation is converted back to a combined half-IQR around the
+    already-reported point estimate. This is a normal-distribution approximation, not an exact combination
+    of IQRs (which isn't generally well-defined), but is a standard, deterministic way to propagate a
+    robust per-component spread estimate into one combined uncertainty band."""
 
 
 class MeasuresCompareResponse(BaseModel):

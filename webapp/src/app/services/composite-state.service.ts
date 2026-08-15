@@ -6,7 +6,7 @@ import { CompositeComponentSpec } from '../models/api.models';
 @Injectable({ providedIn: 'root' })
 export class CompositeStateService {
   readonly components = signal<CompositeComponentSpec[]>([]);
-  readonly state = signal<string>('DE');
+  readonly state = signal<string>('CO');
   readonly countyName = signal<string>('All');
   readonly upgrade = signal<string>('0');
 

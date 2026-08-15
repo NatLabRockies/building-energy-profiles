@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import contextlib
 import dataclasses
+import math
 from pathlib import Path
 from typing import Any
 
@@ -47,6 +48,7 @@ from api.schemas import (
     TimeseriesResponse,
 )
 from building_energy_profiles import location
+from building_energy_profiles.building_condition import select_building_condition_sample
 from building_energy_profiles.building_distribution import compute_building_distribution
 from building_energy_profiles.composite import (
     CompositeBuildingType,
@@ -75,6 +77,15 @@ _NON_END_USE_LABELS = {"total", "net", "purchased"}
 # Portfolio Manager / DOE convention), so we convert with the standard kWh->kBtu unit factor
 # (this is a unit conversion only, not a source-to-site energy conversion).
 KWH_TO_KBTU = 3.412141633
+
+# For a roughly-normal distribution, the interquartile range (25th-75th percentile) spans ~1.349 standard
+# deviations (norm.ppf(0.75) - norm.ppf(0.25) ~= 1.34898), i.e. a *half*-IQR (median-to-Q3, or Q1-to-median)
+# is ~0.6745 standard deviations, so a half-IQR is converted to an implied standard deviation by dividing by
+# 0.6745 (equivalently, multiplying by ~1.4826). `compare_measures`'s `include_uncertainty` uses this to
+# convert a component's (robust, but not directly combinable) IQR into an implied standard deviation, so
+# multiple components'/quantities' uncertainty can be combined by summing variances (assuming independence)
+# and converted back to a combined half-IQR.
+_HALF_IQR_TO_STD = 1.0 / 0.6744897501960817
 
 DEFAULT_METRIC_COLUMNS = [
     "out.electricity.total.energy_consumption",
@@ -992,6 +1003,20 @@ def list_measures(product: str, settings: Settings, release: str | None = None) 
     )
 
 
+def get_model_download_url(product: str, bldg_id: int, upgrade: str, settings: Settings) -> str:
+    """Return the public OEDI download URL for one building's energy model file -- a gzipped OpenStudio
+    ".osm.gz" model for ComStock, or a ".zip" archive (bundling the OSM with its supporting files) for
+    ResStock. Building energy models aren't partitioned by state/county/building type, so only `product`,
+    `bldg_id`, and `upgrade` are needed to build the URL; nothing is downloaded server-side -- the caller
+    (`GET /api/composite/model-download`) redirects the browser straight to this public S3 URL.
+    """
+    processor = _build_processor(settings.cache_dir, product, settings.default_state, "All", "All", upgrade, None, None)
+    # `_build_processor()`'s building_energy_profiles-derived return type isn't seen as fully typed by mypy
+    # (no py.typed marker), same pre-existing gap already visible elsewhere in this module -- str(...)
+    # keeps this new, plain-`str`-returning function itself clean rather than leaking that Any through.
+    return str(processor.model_file_url(bldg_id, upgrade))
+
+
 def list_available_states(product: str, settings: Settings, release: str | None = None) -> AvailableStatesResponse:
     """List every 2-letter state abbreviation with published metadata for `product`, for a state dropdown."""
     try:
@@ -1051,6 +1076,89 @@ def _extract_end_use_means(group: pd.DataFrame) -> dict[str, float]:
     return values
 
 
+def _extract_metric_intensity_iqr(
+    group: pd.DataFrame, columns: list[str], sqft_column: str | None, bldg_ids: list[int] | None
+) -> dict[str, tuple[float, float]]:
+    """Return `{column: (25th percentile, 75th percentile)}` of each column's per-square-foot *intensity*
+    (`column / sqft_column`) for rows in `group`, restricted to `bldg_ids` if given (see
+    `_neighborhood_bldg_ids`) -- the interquartile range of the "population of buildings near the building
+    selected".
+
+    Working in per-sqft intensity (rather than each row's raw absolute value) isolates real
+    efficiency/vintage/equipment variability from pure building-size variability -- a percentile-banded
+    neighborhood is selected by site-EUI rank (an intensity), so two buildings in the same neighborhood can
+    still have very different absolute floor areas (and thus very different absolute energy) despite
+    similar efficiency. `compare_measures` multiplies this intensity IQR back out by the same *absolute*
+    floor area used for its point estimate (rather than each neighbor's own, differing, floor area), so the
+    reported uncertainty reflects "how much might a similarly-efficient building of *this* size vary",
+    consistent with how the point estimate itself is a fixed-size scaling of a population average.
+
+    Skips any column that's missing/all-NaN, or a `bldg_ids` restriction that matches no rows, or if there's
+    no usable `sqft_column`. Empty `group` yields `{}`.
+    """
+    if not sqft_column or sqft_column not in group.columns:
+        return {}
+    if bldg_ids is not None:
+        group = group[group["bldg_id"].isin(bldg_ids)]
+    if group.empty:
+        return {}
+    sqft = pd.to_numeric(group[sqft_column], errors="coerce")
+    values: dict[str, tuple[float, float]] = {}
+    for column in columns:
+        matched = _find_column(group.columns, column)
+        if not matched:
+            continue
+        intensity = (pd.to_numeric(group[matched], errors="coerce") / sqft).replace([float("inf"), float("-inf")], pd.NA).dropna()
+        if intensity.empty:
+            continue
+        values[column] = (float(intensity.quantile(0.25)), float(intensity.quantile(0.75)))
+    return values
+
+
+def _neighborhood_bldg_ids(baseline_group: pd.DataFrame, bldg_id: int | None, sqft_column: str | None, band: float) -> list[int] | None:
+    """Find the `bldg_id`s within `band` percentile points of `bldg_id`'s own site-EUI rank in
+    `baseline_group` -- "the population of buildings near the building selected", for
+    `compare_measures`'s `include_uncertainty`. Returns `None` (meaning: use the *whole* `baseline_group` as
+    the neighborhood -- e.g. for a component with no pinned building) if `bldg_id` is `None`, wasn't found
+    in `baseline_group`, or there's no usable floor-area/site-energy data to rank it by.
+    """
+    if bldg_id is None or not sqft_column or "bldg_id" not in baseline_group.columns:
+        return None
+    energy_column = _find_column(baseline_group.columns, "out.site_energy.total.energy_consumption")
+    if not energy_column:
+        return None
+    row = baseline_group[baseline_group["bldg_id"] == bldg_id]
+    if row.empty:
+        return None
+
+    sqft = pd.to_numeric(baseline_group[sqft_column], errors="coerce")
+    energy = pd.to_numeric(baseline_group[energy_column], errors="coerce")
+    eui = energy * KWH_TO_KBTU / sqft
+    target_eui = eui.loc[row.index[0]]
+    if pd.isna(target_eui):
+        return None
+
+    valid_eui = eui.dropna()
+    if valid_eui.empty:
+        return None
+    rank = float((valid_eui <= target_eui).mean() * 100.0)
+
+    try:
+        selection = select_building_condition_sample(baseline_group, percentile=rank, band=band, sqft_column=sqft_column)
+    except ValueError:
+        return None
+    return selection.bldg_ids
+
+
+def _combine_half_iqr(scaled_half_iqrs: list[float]) -> float:
+    """Combine multiple independent quantities' half-IQR uncertainties (see `_HALF_IQR_TO_STD`) into one
+    combined half-IQR, by converting each to an implied standard deviation, summing variances (the standard
+    "combine independent uncertainties in quadrature" rule), and converting the combined standard deviation
+    back to a half-IQR. Terms of `0` (e.g. a component with no computable IQR) contribute no variance."""
+    combined_variance = sum((half_iqr * _HALF_IQR_TO_STD) ** 2 for half_iqr in scaled_half_iqrs)
+    return math.sqrt(combined_variance) / _HALF_IQR_TO_STD
+
+
 def _parse_measure_selection(selection: str) -> tuple[str | None, str]:
     """Parse a `comparison_upgrades` entry into `(product, upgrade_id)`.
 
@@ -1090,6 +1198,10 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
     # bar chart of end uses, mirroring get_metadata_summary's by_end_use aggregation)
     per_selection_end_use: dict[str, dict[str, float]] = {}
     baseline_end_use: dict[str, float] = {}
+    # column -> [scaled half-IQR per component] -- only populated when request.include_uncertainty; see
+    # `_combine_half_iqr` for how each column's list is combined into one uncertainty range.
+    baseline_half_iqr: dict[str, list[float]] = {}
+    per_selection_half_iqr: dict[str, dict[str, list[float]]] = {}
     warnings: list[str] = []
 
     # Pass 1: load each component's samples and floor area. Scales can't be computed inline because a
@@ -1170,6 +1282,23 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
         for end_use, value in _extract_end_use_means(baseline_group).items():
             baseline_end_use[end_use] = baseline_end_use.get(end_use, 0.0) + scale * value
 
+        # Uncertainty (opt-in): find this component's own "population of buildings near the building
+        # selected" (its pinned bldg_id's site-EUI neighborhood, or its whole sample if unpinned), then use
+        # that same neighborhood's bldg_ids to compute each column's per-sqft intensity IQR under baseline
+        # and under every upgrade -- so the uncertainty reflects the same (matched) subset of physical
+        # buildings throughout. The intensity IQR is then scaled by this component's own *target* absolute
+        # floor area (the same one used for its point estimate above), not each neighbor's own -- see
+        # `_extract_metric_intensity_iqr`.
+        target_sqft_for_component = scale * component_sqft.get((component.product, component.building_type), 0.0)
+        if request.include_uncertainty and target_sqft_for_component:
+            neighborhood_bldg_ids = _neighborhood_bldg_ids(
+                baseline_group, component.bldg_id, entry["sqft_column"], request.uncertainty_band
+            )
+            for column, (q1, q3) in _extract_metric_intensity_iqr(
+                baseline_group, columns, entry["sqft_column"], neighborhood_bldg_ids
+            ).items():
+                baseline_half_iqr.setdefault(column, []).append(target_sqft_for_component * (q3 - q1) / 2.0)
+
         # Per-selection: this component uses its own upgrade id if the selection targets its product (or
         # has no product prefix); otherwise it stays at baseline for this particular comparison, so a
         # commercial-only measure can't silently reapply an unrelated residential upgrade that happens to
@@ -1183,6 +1312,29 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
             for end_use, value in _extract_end_use_means(group).items():
                 end_use_bucket = per_selection_end_use.setdefault(selection, {})
                 end_use_bucket[end_use] = end_use_bucket.get(end_use, 0.0) + scale * value
+            if request.include_uncertainty and target_sqft_for_component:
+                for column, (q1, q3) in _extract_metric_intensity_iqr(group, columns, entry["sqft_column"], neighborhood_bldg_ids).items():
+                    half_iqr_bucket = per_selection_half_iqr.setdefault(selection, {})
+                    half_iqr_bucket.setdefault(column, []).append(target_sqft_for_component * (q3 - q1) / 2.0)
+
+    # Combine each column's per-component half-IQR contributions (see `_combine_half_iqr`) into one
+    # uncertainty range around the already-computed point estimate -- only when requested.
+    baseline_iqr: dict[str, tuple[float, float]] = {}
+    per_selection_iqr: dict[str, dict[str, tuple[float, float]]] = {}
+    if request.include_uncertainty:
+        for column, halves in baseline_half_iqr.items():
+            baseline_value = baseline_values.get(column)
+            if baseline_value is None or not halves:
+                continue
+            combined_half = _combine_half_iqr(halves)
+            baseline_iqr[column] = (baseline_value - combined_half, baseline_value + combined_half)
+        for selection, column_halves in per_selection_half_iqr.items():
+            for column, halves in column_halves.items():
+                upgrade_value = per_selection_values.get(selection, {}).get(column)
+                if upgrade_value is None or not halves:
+                    continue
+                combined_half = _combine_half_iqr(halves)
+                per_selection_iqr.setdefault(selection, {})[column] = (upgrade_value - combined_half, upgrade_value + combined_half)
 
     results: dict[str, list[MeasureSavings]] = {}
     for column in columns:
@@ -1201,6 +1353,25 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
             # Positive = savings (less energy than baseline); negative = an increase vs. baseline.
             absolute_savings = baseline_value - upgrade_value
             pct_savings = (absolute_savings / baseline_value * 100) if baseline_value else None
+
+            baseline_kwh_iqr = baseline_iqr.get(column)
+            upgrade_kwh_iqr = per_selection_iqr.get(selection, {}).get(column)
+            absolute_savings_kwh_iqr: tuple[float, float] | None = None
+            pct_savings_iqr: tuple[float, float] | None = None
+            if baseline_kwh_iqr is not None and upgrade_kwh_iqr is not None:
+                # Baseline and upgrade are treated as independent quantities here (a simplification -- in
+                # reality they share the same underlying buildings, just simulated under different
+                # upgrades), so their variances (derived from each one's half-IQR) are summed.
+                savings_half = _combine_half_iqr(
+                    [(baseline_kwh_iqr[1] - baseline_kwh_iqr[0]) / 2.0, (upgrade_kwh_iqr[1] - upgrade_kwh_iqr[0]) / 2.0]
+                )
+                absolute_savings_kwh_iqr = (absolute_savings - savings_half, absolute_savings + savings_half)
+                if baseline_value:
+                    pct_savings_iqr = (
+                        absolute_savings_kwh_iqr[0] / baseline_value * 100,
+                        absolute_savings_kwh_iqr[1] / baseline_value * 100,
+                    )
+
             savings_for_column.append(
                 MeasureSavings(
                     upgrade_id=sel_upgrade_id,
@@ -1210,6 +1381,10 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
                     upgrade_kwh=upgrade_value,
                     absolute_savings_kwh=absolute_savings,
                     pct_savings=pct_savings,
+                    baseline_kwh_iqr=baseline_kwh_iqr,
+                    upgrade_kwh_iqr=upgrade_kwh_iqr,
+                    absolute_savings_kwh_iqr=absolute_savings_kwh_iqr,
+                    pct_savings_iqr=pct_savings_iqr,
                 )
             )
         if savings_for_column:

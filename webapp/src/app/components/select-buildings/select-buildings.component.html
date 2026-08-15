@@ -22,6 +22,37 @@
     </div>
   }
 
+  @if (!loading() && distributions().length > 0) {
+    <section class="target-eui-box">
+      <h3>Match to a target EUI</h3>
+      <p class="target-eui-note">
+        @if (distributions().length > 1) {
+          Enter a target site EUI for the whole composite building and the closest matching real building
+          will be selected for each building type, weighted by floor area.
+        } @else {
+          Enter a target site EUI and the closest real sampled building will be selected.
+        }
+      </p>
+      <div class="target-eui-controls">
+        <input
+          type="number"
+          step="0.1"
+          placeholder="e.g. 55.0"
+          [ngModel]="targetEui()"
+          (ngModelChange)="targetEui.set($event)"
+        />
+        <span class="unit">kBtu/ft2/yr</span>
+        <button type="button" [disabled]="targetEui() == null" (click)="matchToTargetEui()">Find closest match</button>
+      </div>
+      @if (lastMatchedTarget() != null) {
+        <p class="match-result">
+          Matched to target {{ lastMatchedTarget() | number: '1.1-1' }} kBtu/ft2/yr &mdash; see the selected
+          building(s) below.
+        </p>
+      }
+    </section>
+  }
+
   @if (compositeViewModel(); as composite) {
     <section class="distribution-box composite-box">
       <h3>Composite Mix &mdash; Weighted Site EUI Distribution</h3>

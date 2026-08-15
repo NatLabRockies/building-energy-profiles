@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 
 from api import services
 from api.config import Settings
@@ -148,6 +148,20 @@ def get_available_counties(
     """List every distinct county name actually published for a state, for a county dropdown dependent on
     the selected state. Not every county is guaranteed to be represented -- see the response's `note`."""
     return services.list_available_counties(product, state.upper(), settings, release=release)
+
+
+@app.get("/api/composite/model-download")
+def get_model_download(
+    product: str = Query(..., pattern="^(comstock|resstock)$"),
+    bldg_id: int = Query(..., gt=0),
+    upgrade: str = "0",
+) -> RedirectResponse:
+    """Redirect the browser straight to the public OEDI download URL for one building's energy model file
+    -- a gzipped OpenStudio ".osm.gz" model for ComStock, or a ".zip" archive (bundling the OSM with its
+    supporting files) for ResStock. Nothing is downloaded or cached server-side; this only builds the URL
+    (see `building_energy_profiles.BuildStockProcessor.model_file_url()`)."""
+    url = services.get_model_download_url(product, bldg_id, upgrade, settings)
+    return RedirectResponse(url)
 
 
 @app.post("/api/measures/compare", response_model=MeasuresCompareResponse)

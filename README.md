@@ -1,7 +1,7 @@
 # Building Energy Profiles
 
 A Python package for downloading and analyzing NLR ComStock and ResStock metadata, annual results, upgrade
-packages, and individual-building time series from the public OEDI data lake.
+packages, individual-building time series, and building energy model files from the public OEDI data lake.
 
 The package exposes two processors:
 
@@ -41,8 +41,8 @@ frontend at http://localhost:4200, and stops both on Ctrl+C.
 
 ## Documentation
 
-- [Usage guide](docs/usage.md): installation, searches, time series, upgrades, weights, total-energy calculations,
-  and schema normalization.
+- [Usage guide](docs/usage.md): installation, searches, time series, building energy model downloads,
+  upgrades, weights, total-energy calculations, and schema normalization.
 - [Data model and limitations](docs/limitations.md): releases, download scope, caching, duplicate records,
   multifamily semantics, time-series differences, and network behavior.
 - [Extending the package](docs/extending.md): the `BuildStockProcessor` abstract contract and how to add
@@ -227,6 +227,17 @@ Downloads time series data for buildings specified in the input DataFrame using 
 - Downloads from the ComStock AWS S3 bucket
 - Returns paths and building IDs of downloaded files
 
+#### `download_building_models(data_frame, save_dir: Path) -> tuple` / `download_building_model(building_id, save_dir: Path, upgrade: str | None = None) -> Path`
+Downloads each sampled building's energy model file -- a gzipped OpenStudio `.osm.gz` model for ComStock (a
+`.zip` archive for ResStock; see `model_file_extension`, and the ResStockProcessor section below).
+
+- `download_building_models()` mirrors `process_building_time_series()`: pass it a metadata DataFrame (any
+  `bldg_id` column) and it downloads every row's model file in parallel, skipping files that already exist
+- `download_building_model()` downloads a single building's model file, e.g. for a specific pinned building
+  rather than an entire sample
+- `model_file_url(building_id, upgrade)` / `model_file_name(building_id, upgrade)` build the underlying
+  OEDI URL/filename without downloading anything, if you just need the link
+
 ### Searching for Buildings, Then Downloading Their Time Series
 
 `process_metadata()`'s constraints (`county_name`, `building_type`, `min_sqft`/`max_sqft`) act as a search: find
@@ -410,6 +421,11 @@ metadata_df = processor.process_metadata(save_dir=processor.base_dir)
   [`openpyxl`](https://openpyxl.readthedocs.io/) is a dependency). The 2025 AMY2012 dataset does not publish
   a separate measure crosswalk in OEDI; use `list_upgrades()` for its release- and weather-specific upgrade
   package ids.
+- **Building energy model format**: `download_building_model(s)()` downloads a `.zip` archive (bundling the
+  OSM with its supporting files) for ResStock, not a bare `.osm.gz` model like ComStock -- see
+  `model_file_extension`. The published `upgrade=...` folder itself also isn't zero-padded for ResStock
+  (`upgrade=5`, not ComStock's `upgrade=05`), though the filename's own upgrade suffix is zero-padded for
+  both products.
 
 ### Handling Multifamily Buildings
 

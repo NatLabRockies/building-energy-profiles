@@ -1,5 +1,6 @@
 import { Component, OnInit, computed, signal } from '@angular/core';
 import { CommonModule } from '@angular/common';
+import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { ChartConfiguration } from 'chart.js';
 // Type-only import -- brings in chartjs-plugin-annotation's TypeScript module augmentation (so
@@ -78,7 +79,7 @@ interface CompositeViewModel {
 @Component({
   selector: 'app-select-buildings',
   standalone: true,
-  imports: [CommonModule, ChartComponent],
+  imports: [CommonModule, FormsModule, ChartComponent],
   templateUrl: './select-buildings.component.html',
   styleUrl: './select-buildings.component.scss',
 })
@@ -105,6 +106,11 @@ export class SelectBuildingsComponent implements OnInit {
   /** `"<product>:<building_type>"` -> true while re-fetching that component's distribution after
    * Apply/Clear filters. */
   refreshingByKey = signal<Record<string, boolean>>({});
+  /** Current value of the "match to target EUI" input -- see `matchToTargetEui()`. `null` while empty. */
+  targetEui = signal<number | null>(null);
+  /** The target EUI last used by `matchToTargetEui()`, for a brief confirmation message -- `null` until
+   * the user has matched at least once. */
+  lastMatchedTarget = signal<number | null>(null);
 
   readonly percentileKeys = PERCENTILE_KEYS;
   readonly percentileLabels = PERCENTILE_LABELS;
@@ -370,6 +376,71 @@ export class SelectBuildingsComponent implements OnInit {
       return;
     }
     this.setSelection(dist, this.nearestPoint(dist, value));
+  }
+
+  /** Enter a target site EUI for the whole composite (or, with a single building type, for that one
+   * component) and pin the closest matching real building for each -- see the class docstring below.
+   * Deterministic: given the same distributions/fractions/target, always picks the same buildings. */
+  matchToTargetEui(): void {
+    const target = this.targetEui();
+    const distributions = this.distributions();
+    if (target == null || !Number.isFinite(target) || distributions.length === 0) {
+      return;
+    }
+
+    if (distributions.length === 1) {
+      // A single building type has nothing to combine -- just pin the real building closest to the target.
+      this.selectValue(distributions[0], target);
+      this.lastMatchedTarget.set(target);
+      return;
+    }
+
+    // For multiple building types, solve for each component's own target EUI x_i minimizing the
+    // (population-variance-weighted) squared deviation from its own population mean, subject to the
+    // floor-area-weighted average of the x_i's equalling the user's target -- a standard constrained
+    // least-squares (Lagrange multiplier) solution:
+    //
+    //   x_i = mean_i + lambda * weight_i * variance_i,  lambda = (target - Σ weight_i*mean_i) / Σ weight_i^2*variance_i
+    //
+    // where weight_i is this component's *floor-area* share (its mix fraction times its own population's
+    // average sqft, normalized to sum to 1) -- so a component with more headroom (a wider spread of real
+    // sampled EUIs) and/or a bigger floor-area share absorbs more of the adjustment needed to hit the
+    // target, while a narrow/small component barely moves off its own typical value. Each x_i is then
+    // clamped to that component's own observed EUI range (a real building can't be picked outside it) and
+    // mapped to the closest real building -- entirely deterministic, no randomness.
+    const components = this.compositeState.components();
+    const infos = distributions.map((dist) => {
+      const component = components.find((c) => c.product === dist.product && c.building_type === dist.building_type);
+      const fraction = component?.fraction ?? 0;
+      const values = dist.points.map((p) => p.value);
+      const avgSqft = dist.points.length ? dist.points.reduce((sum, p) => sum + (p.sqft ?? 0), 0) / dist.points.length : 0;
+      const mean = dist.mean_value;
+      const variance = values.length ? values.reduce((sum, v) => sum + (v - mean) ** 2, 0) / values.length : 0;
+      return {
+        dist,
+        weight: fraction * (avgSqft || 1),
+        mean,
+        variance,
+        min: values.length ? Math.min(...values) : mean,
+        max: values.length ? Math.max(...values) : mean,
+      };
+    });
+
+    const totalWeight = infos.reduce((sum, i) => sum + i.weight, 0) || 1;
+    for (const info of infos) {
+      info.weight = info.weight / totalWeight;
+    }
+
+    const baseComposite = infos.reduce((sum, i) => sum + i.weight * i.mean, 0);
+    const denominator = infos.reduce((sum, i) => sum + i.weight * i.weight * i.variance, 0);
+    const lambda = denominator > 0 ? (target - baseComposite) / denominator : 0;
+
+    for (const info of infos) {
+      const raw = info.mean + lambda * info.weight * info.variance;
+      const clamped = Math.min(info.max, Math.max(info.min, raw));
+      this.selectValue(info.dist, clamped);
+    }
+    this.lastMatchedTarget.set(target);
   }
 
   /** The (KDE, or histogram-fallback) density curve for one component -- shared between its own chart and

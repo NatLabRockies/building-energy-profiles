@@ -68,6 +68,9 @@ class ResStockProcessor(BuildStockProcessor):
     building_types = RESSTOCK_BUILDING_TYPES
     result_variables = RESSTOCK_RESULT_VARIABLES
     measure_upgrade_packages = RESSTOCK_MEASURE_UPGRADE_PACKAGES
+    # ResStock publishes zip archives (bundling the OSM with its supporting files), e.g.
+    # "bldg0000001-up00.zip".
+    model_file_extension = ".zip"
 
     def __init__(
         self,
@@ -174,6 +177,11 @@ class ResStockProcessor(BuildStockProcessor):
         if self.building_type != "All":
             meta_df = meta_df[meta_df["in.geometry_building_type_recs"] == self.building_type]
         return meta_df
+
+    def _model_upgrade_folder(self, upgrade: str) -> str:
+        # Unlike ComStock, ResStock's building_energy_models/ is partitioned as upgrade=0, upgrade=1, ...
+        # (not zero-padded).
+        return str(int(upgrade))
 
     def get_measure_crosswalk(self, save_dir: Path) -> pd.DataFrame:
         """Download (if needed) and return the measure name crosswalk for this release.

@@ -20,6 +20,7 @@ from api.services import (
     _frame_to_records,
     _resample_hourly,
     _sqft_bounds_warning,
+    get_model_download_url,
     list_available_counties,
     list_available_states,
     resolve_composite,
@@ -515,3 +516,24 @@ class TestListAvailableCounties:
 
         with pytest.raises(ServiceError):
             list_available_counties("comstock", "DE", settings)
+
+
+class TestGetModelDownloadUrl:
+    """No network involved -- `model_file_url()` is pure string formatting off of `base_url`."""
+
+    @pytest.mark.unit
+    def test_comstock_model_download_url(self, tmp_path):
+        settings = _make_settings(tmp_path)
+
+        url = get_model_download_url("comstock", 1, "0", settings)
+
+        assert url.endswith("building_energy_models/upgrade=00/bldg0000001-up00.osm.gz")
+
+    @pytest.mark.unit
+    def test_resstock_model_download_url_upgrade_folder_not_zero_padded(self, tmp_path):
+        settings = _make_settings(tmp_path)
+
+        url = get_model_download_url("resstock", 1, "5", settings)
+
+        # ResStock's upgrade *folder* isn't zero-padded ("upgrade=5"), unlike the filename's "-up05" suffix.
+        assert url.endswith("building_energy_models/upgrade=5/bldg0000001-up05.zip")
