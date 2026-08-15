@@ -41,6 +41,7 @@ from .energy_star_crosswalk import (
     energy_star_property_types_for_buildstock_type,
     list_energy_star_property_types,
     map_energy_star_property_type,
+    refine_building_type_for_sqft,
 )
 from .location import list_available_counties, list_available_states
 from .portfolio import (
@@ -91,6 +92,7 @@ __all__ = [
     "map_energy_star_property_type",
     "normalize_time_series_columns",
     "pull_composite_time_series",
+    "refine_building_type_for_sqft",
     "resolve_fraction_weights",
     "result_variables_from_columns",
     "select_building_condition_sample",

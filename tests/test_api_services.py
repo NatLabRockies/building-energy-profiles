@@ -15,6 +15,7 @@ from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyS
 from api.services import (
     ServiceError,
     _apply_component_filters,
+    _apply_component_sqft_range,
     _component_scales,
     _find_column,
     _frame_to_records,
@@ -210,6 +211,52 @@ class TestResolveComposite:
         with pytest.raises(ValueError, match="exactly one"):
             EnergyStarComponentIn(energy_star_property_type="Bank Branch", fraction=0.5, sqft=50_000)
 
+    @pytest.mark.unit
+    def test_sqft_mode_refines_generic_office_to_small_office(self, tmp_path: Path) -> None:
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Office", sqft=5_000)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].building_type == "SmallOffice"
+        assert "Refined to SmallOffice" in response.components[0].notes
+
+    @pytest.mark.unit
+    def test_sqft_mode_refines_generic_office_to_large_office(self, tmp_path: Path) -> None:
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Office", sqft=300_000)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].building_type == "LargeOffice"
+        assert "Refined to LargeOffice" in response.components[0].notes
+
+    @pytest.mark.unit
+    def test_sqft_mode_keeps_medium_office_for_mid_sized_office_without_note(self, tmp_path: Path) -> None:
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Office", sqft=50_000)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].building_type == "MediumOffice"
+        assert "Refined" not in response.components[0].notes
+
+    @pytest.mark.unit
+    def test_fraction_mode_does_not_refine_generic_office(self, tmp_path: Path) -> None:
+        """No sqft entered at all -> nothing to refine against, so the crosswalk's static default stands."""
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Office", fraction=1.0)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].building_type == "MediumOffice"
+
+    @pytest.mark.unit
+    def test_sqft_mode_does_not_refine_property_types_outside_the_size_tiered_set(self, tmp_path: Path) -> None:
+        """ "Bank Branch" -> SmallOffice reflects a bank's typical scale, not an unknown size -- a large
+        entered sqft shouldn't retarget it to MediumOffice/LargeOffice."""
+        request = CompositeResolveRequest(components=[EnergyStarComponentIn(energy_star_property_type="Bank Branch", sqft=300_000)])
+
+        response = resolve_composite(request, _make_settings(tmp_path))
+
+        assert response.resolvable[0].building_type == "SmallOffice"
+
 
 class TestFindColumn:
     @pytest.mark.unit
@@ -282,6 +329,52 @@ class TestApplyComponentFilters:
     @pytest.mark.unit
     def test_filter_excluding_everyone_returns_empty_frame(self):
         result = _apply_component_filters(self._frame(), {"in.vintage": ["Before 1946"]})
+        assert result.empty
+
+
+class TestApplyComponentSqftRange:
+    """Test cases for _apply_component_sqft_range() -- narrowing a component's metadata population by
+    floor area, the numeric counterpart of _apply_component_filters()'s categorical column filters.
+    """
+
+    def _frame(self) -> pd.DataFrame:
+        return pd.DataFrame({"bldg_id": [1, 2, 3, 4], "in.sqft": [1_000.0, 5_500.0, 21_000.0, 90_000.0]})
+
+    @pytest.mark.unit
+    def test_no_bounds_returns_frame_unchanged(self):
+        result = _apply_component_sqft_range(self._frame(), None, None)
+        assert len(result) == 4
+
+    @pytest.mark.unit
+    def test_min_only_keeps_rows_at_or_above(self):
+        result = _apply_component_sqft_range(self._frame(), 5_500, None)
+        assert sorted(result["bldg_id"].tolist()) == [2, 3, 4]
+
+    @pytest.mark.unit
+    def test_max_only_keeps_rows_at_or_below(self):
+        result = _apply_component_sqft_range(self._frame(), None, 5_500)
+        assert sorted(result["bldg_id"].tolist()) == [1, 2]
+
+    @pytest.mark.unit
+    def test_both_bounds_keep_rows_within_range_inclusive(self):
+        result = _apply_component_sqft_range(self._frame(), 5_500, 21_000)
+        assert sorted(result["bldg_id"].tolist()) == [2, 3]
+
+    @pytest.mark.unit
+    def test_tolerates_unit_suffixed_column_name(self):
+        frame = self._frame().rename(columns={"in.sqft": "in.sqft..ft2"})
+        result = _apply_component_sqft_range(frame, 5_500, 21_000)
+        assert sorted(result["bldg_id"].tolist()) == [2, 3]
+
+    @pytest.mark.unit
+    def test_no_usable_sqft_column_is_silently_ignored(self):
+        frame = pd.DataFrame({"bldg_id": [1, 2]})
+        result = _apply_component_sqft_range(frame, 5_500, 21_000)
+        assert len(result) == 2
+
+    @pytest.mark.unit
+    def test_range_excluding_everyone_returns_empty_frame(self):
+        result = _apply_component_sqft_range(self._frame(), 200_000, 300_000)
         assert result.empty
 
 

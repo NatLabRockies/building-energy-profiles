@@ -29,17 +29,36 @@ interface Selection {
   annualSiteEnergyKwh: number | null;
 }
 
+/** A (possibly one-sided) floor-area bound for the "narrow the population" sqft range control -- the
+ * numeric counterpart of the curated categorical `<select>` filters. */
+interface SqftRange {
+  min: number | null;
+  max: number | null;
+}
+
 interface DistributionViewModel {
   key: string;
   dist: ComponentDistribution;
   selection: Selection | undefined;
   chartData: ChartConfiguration<'line'>['data'];
   chartOptions: ChartConfiguration<'line'>['options'];
+  /** The floor area requested for this component in the composite builder's "sqft" mode (null in
+   * "fraction" mode, or if unset) -- shown alongside the selection so it's clear how close the currently
+   * picked real building's own floor area is to what was actually asked for. `null` for a multifamily
+   * component (see `isMultifamily`) even if a target sqft is set, since there's nothing sensible to show. */
+  targetSqft: number | null;
+  /** True for a ResStock "Multi-Family with ... Units" component, whose `in.sqft` is one dwelling unit's
+   * floor area, not the whole (multi-unit) building's -- so floor-area target/range matching against a
+   * single sampled row doesn't mean what it does for every other building type (a whole building/home).
+   * Suppresses the sqft range filter, "closest to requested sqft" shortcut, and target-sqft display. */
+  isMultifamily: boolean;
   /** Curated filterable columns for this component (see FilterColumnOptions), for the "narrow the
    * population" controls -- empty if filter options haven't loaded (or none are available). */
   filterColumns: FilterColumnOptions[];
   /** Column -> currently selected (but not necessarily yet applied) allowed values in the <select>. */
   draftFilters: Record<string, string[]>;
+  /** Currently entered (but not necessarily yet applied) floor-area bounds for this component. */
+  draftSqftRange: SqftRange;
   /** Number of columns with an actively APPLIED filter (reflected in this component's current
    * distribution) -- shown as a badge so it's clear the population has been narrowed. */
   appliedFilterCount: number;
@@ -103,6 +122,13 @@ export class SelectBuildingsComponent implements OnInit {
   /** `"<product>:<building_type>"` -> column -> APPLIED allowed values -- what's actually reflected in
    * this component's current distribution/selection and the composite/sample-average calculations. */
   appliedFilters = signal<Record<string, Record<string, string[]>>>({});
+  /** `"<product>:<building_type>"` -> currently entered (but not necessarily yet applied) floor-area
+   * bounds -- the numeric counterpart of `draftFilters`, committed into `appliedSqftRange` only on
+   * "Apply filters". */
+  draftSqftRange = signal<Record<string, SqftRange>>({});
+  /** `"<product>:<building_type>"` -> APPLIED floor-area bounds -- the numeric counterpart of
+   * `appliedFilters`. */
+  appliedSqftRange = signal<Record<string, SqftRange>>({});
   /** `"<product>:<building_type>"` -> true while re-fetching that component's distribution after
    * Apply/Clear filters. */
   refreshingByKey = signal<Record<string, boolean>>({});
@@ -120,19 +146,30 @@ export class SelectBuildingsComponent implements OnInit {
     const filterOptions = this.filterOptionsByKey();
     const draft = this.draftFilters();
     const applied = this.appliedFilters();
+    const draftSqft = this.draftSqftRange();
+    const appliedSqft = this.appliedSqftRange();
     const refreshing = this.refreshingByKey();
+    const components = this.compositeState.components();
     return this.distributions().map((dist) => {
       const key = this.componentKey(dist.product, dist.building_type);
       const selection = selections[key];
+      const appliedRange = appliedSqft[key];
+      const appliedRangeCount = appliedRange && (appliedRange.min != null || appliedRange.max != null) ? 1 : 0;
+      const isMultifamily = this.isMultifamilyComponent(dist.product, dist.building_type);
       return {
         key,
         dist,
         selection,
         chartData: this.buildChartData(dist),
         chartOptions: this.buildChartOptions(dist, selection),
+        targetSqft: isMultifamily
+          ? null
+          : (components.find((c) => c.product === dist.product && c.building_type === dist.building_type)?.sqft ?? null),
+        isMultifamily,
         filterColumns: filterOptions[key]?.columns ?? [],
         draftFilters: draft[key] ?? {},
-        appliedFilterCount: Object.keys(applied[key] ?? {}).length,
+        draftSqftRange: draftSqft[key] ?? { min: null, max: null },
+        appliedFilterCount: Object.keys(applied[key] ?? {}).length + appliedRangeCount,
         refreshing: !!refreshing[key],
       };
     });
@@ -158,6 +195,12 @@ export class SelectBuildingsComponent implements OnInit {
 
   private componentKey(product: string, buildingType: string): string {
     return `${product}:${buildingType}`;
+  }
+
+  /** True for a ResStock "Multi-Family with ... Units" component -- see `DistributionViewModel
+   * .isMultifamily`'s docstring for why sqft target/range matching is suppressed for these. */
+  private isMultifamilyComponent(product: string, buildingType: string): boolean {
+    return product === 'resstock' && buildingType.startsWith('Multi-Family');
   }
 
   load(): void {
@@ -211,10 +254,17 @@ export class SelectBuildingsComponent implements OnInit {
    * Dashboard would report for the same filters. */
   private refreshSampleAverage(): void {
     const applied = this.appliedFilters();
+    const appliedSqft = this.appliedSqftRange();
     const components = this.compositeState.components().map((component) => {
       const key = this.componentKey(component.product, component.building_type);
       const filters = applied[key];
-      return filters && Object.keys(filters).length > 0 ? { ...component, filters } : component;
+      const sqftRange = appliedSqft[key];
+      return {
+        ...component,
+        ...(filters && Object.keys(filters).length > 0 ? { filters } : {}),
+        ...(sqftRange?.min != null ? { min_sqft: sqftRange.min } : {}),
+        ...(sqftRange?.max != null ? { max_sqft: sqftRange.max } : {}),
+      };
     });
     this.api
       .getMetadataSummary({
@@ -287,25 +337,42 @@ export class SelectBuildingsComponent implements OnInit {
     return this.draftFilters()[componentKey]?.[column]?.includes(value) ?? false;
   }
 
-  /** Commit this component's draft <select> choices as the APPLIED filters, re-fetch its distribution
-   * under the narrowed population, reset its selection to the new population's median (the previous pick
-   * may no longer exist in it), and refresh the composite panel's sample-average reference line. */
+  /** Update the in-progress (not yet applied) sqft range bound for one component -- only takes effect
+   * (and re-fetches that component's distribution) once "Apply filters" is clicked. `null`/non-finite
+   * input clears that bound. */
+  onSqftRangeChange(componentKey: string, bound: 'min' | 'max', value: number | null): void {
+    const parsed = value != null && Number.isFinite(value) ? value : null;
+    this.draftSqftRange.update((current) => ({
+      ...current,
+      [componentKey]: { ...(current[componentKey] ?? { min: null, max: null }), [bound]: parsed },
+    }));
+  }
+
+  /** Commit this component's draft <select> choices and sqft range as the APPLIED filters, re-fetch its
+   * distribution under the narrowed population, reset its selection to the new population's median (the
+   * previous pick may no longer exist in it), and refresh the composite panel's sample-average reference
+   * line. */
   applyFilters(dist: ComponentDistribution): void {
     const key = this.componentKey(dist.product, dist.building_type);
     const filters = { ...(this.draftFilters()[key] ?? {}) };
+    const sqftRange = { ...(this.draftSqftRange()[key] ?? { min: null, max: null }) };
     this.appliedFilters.update((current) => ({ ...current, [key]: filters }));
-    this.refreshComponentDistribution(dist, filters);
+    this.appliedSqftRange.update((current) => ({ ...current, [key]: sqftRange }));
+    this.refreshComponentDistribution(dist, filters, sqftRange);
   }
 
   /** Reset this component back to its full (unfiltered) population. */
   clearFilters(dist: ComponentDistribution): void {
     const key = this.componentKey(dist.product, dist.building_type);
+    const emptyRange: SqftRange = { min: null, max: null };
     this.draftFilters.update((current) => ({ ...current, [key]: {} }));
     this.appliedFilters.update((current) => ({ ...current, [key]: {} }));
-    this.refreshComponentDistribution(dist, {});
+    this.draftSqftRange.update((current) => ({ ...current, [key]: emptyRange }));
+    this.appliedSqftRange.update((current) => ({ ...current, [key]: emptyRange }));
+    this.refreshComponentDistribution(dist, {}, emptyRange);
   }
 
-  private refreshComponentDistribution(dist: ComponentDistribution, filters: Record<string, string[]>): void {
+  private refreshComponentDistribution(dist: ComponentDistribution, filters: Record<string, string[]>, sqftRange?: SqftRange): void {
     const key = this.componentKey(dist.product, dist.building_type);
     const componentSpec = this.compositeState
       .components()
@@ -319,7 +386,14 @@ export class SelectBuildingsComponent implements OnInit {
     this.errorMessage.set(null);
     this.api
       .getBuildingDistributions({
-        components: [{ ...componentSpec, filters: hasFilters ? filters : null }],
+        components: [
+          {
+            ...componentSpec,
+            filters: hasFilters ? filters : null,
+            min_sqft: sqftRange?.min ?? null,
+            max_sqft: sqftRange?.max ?? null,
+          },
+        ],
         state: this.compositeState.state(),
         county_name: this.compositeState.countyName(),
         upgrade: this.compositeState.upgrade(),
@@ -329,9 +403,18 @@ export class SelectBuildingsComponent implements OnInit {
           const updated = result.distributions[0];
           if (updated) {
             this.distributions.update((current) => current.map((d) => (this.componentKey(d.product, d.building_type) === key ? updated : d)));
-            const median = updated.percentile_buildings['median'];
-            if (median) {
-              this.setSelection(updated, median);
+            // Re-picking a default after the population changes: a "sqft" mode component re-anchors to
+            // the (possibly narrowed) population's nearest floor-area match, keeping it representative of
+            // the requested building size; otherwise falls back to the population's median EUI, as before.
+            // Skipped for multifamily -- its sqft is one dwelling unit's floor area, not the whole
+            // building's, so "nearest to the requested (whole-building) sqft" isn't a meaningful match.
+            if (componentSpec.sqft != null && updated.points.length > 0 && !this.isMultifamilyComponent(dist.product, dist.building_type)) {
+              this.selectNearestSqft(updated, componentSpec.sqft);
+            } else {
+              const median = updated.percentile_buildings['median'];
+              if (median) {
+                this.setSelection(updated, median);
+              }
             }
           } else {
             const label = dist.label || dist.building_type;
@@ -362,6 +445,34 @@ export class SelectBuildingsComponent implements OnInit {
       }
     }
     return nearest;
+  }
+
+  /** Select the real building whose own floor area is closest to `targetSqft` -- the same "nearest real
+   * building" logic `resolve_composite()`'s sqft-mode auto-selection uses server-side (see
+   * `find_nearest_sqft_bldg_id`), exposed here so a user can re-apply it after narrowing the population
+   * with filters, or switch back to it after picking a building by percentile/EUI instead. Falls back to
+   * the site-EUI-based `nearestPoint()` for any point missing a floor area. */
+  private nearestPointBySqft(dist: ComponentDistribution, targetSqft: number): DistributionPoint {
+    const withSqft = dist.points.filter((p) => p.sqft != null);
+    if (withSqft.length === 0) {
+      return this.nearestPoint(dist, targetSqft);
+    }
+    let nearest = withSqft[0];
+    let bestDiff = Math.abs((nearest.sqft as number) - targetSqft);
+    for (const point of withSqft) {
+      const diff = Math.abs((point.sqft as number) - targetSqft);
+      if (diff < bestDiff) {
+        nearest = point;
+        bestDiff = diff;
+      }
+    }
+    return nearest;
+  }
+
+  /** "Closest to target sqft" quick-select shortcut -- only shown/usable when this component has a
+   * requested floor area (composite builder's "sqft" mode). */
+  selectNearestSqft(dist: ComponentDistribution, targetSqft: number): void {
+    this.setSelection(dist, this.nearestPointBySqft(dist, targetSqft));
   }
 
   selectPercentile(dist: ComponentDistribution, key: PercentileKey): void {
