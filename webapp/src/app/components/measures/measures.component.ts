@@ -60,6 +60,13 @@ export class MeasuresComponent implements OnInit {
    * MeasureSavings.absolute_savings_kwh_iqr etc.) -- shown as extra grid columns and error bars on the
    * savings chart. Off by default since it costs extra computation the user may not need. */
   showUncertainty = signal(false);
+  /** +/- percentile points (of site EUI) defining each component's "nearby population" for the IQR
+   * uncertainty band (see MeasuresCompareRequest.uncertainty_band) -- smaller means a tighter neighborhood
+   * of more-similar buildings, and therefore a tighter (narrower) reported uncertainty range. Matches the
+   * backend's own default (10) until the user adjusts it. */
+  uncertaintyBand = signal(10);
+  readonly minUncertaintyBand = 1;
+  readonly maxUncertaintyBand = 50;
 
   savingsChartData?: ChartConfiguration<'bar'>['data'];
   loadDurationChartData?: ChartConfiguration<'line'>['data'];
@@ -272,6 +279,16 @@ export class MeasuresComponent implements OnInit {
     return savings?.name ?? key;
   }
 
+  /** Clamp and set `uncertaintyBand()` from the number input -- keeps it within the backend's own
+   * accepted range (see MeasuresCompareRequest.uncertainty_band) even if the user types something out of
+   * bounds. Ignores non-finite input (e.g. a momentarily-empty field while typing). */
+  setUncertaintyBand(value: number): void {
+    if (!Number.isFinite(value)) {
+      return;
+    }
+    this.uncertaintyBand.set(Math.min(this.maxUncertaintyBand, Math.max(this.minUncertaintyBand, value)));
+  }
+
   /** Comma-separated display names of comparedKeys(), for the detail section's summary line. */
   comparedMeasureNames(): string {
     return this.comparedKeys()
@@ -296,6 +313,7 @@ export class MeasuresComponent implements OnInit {
         baseline_upgrade: this.baselineUpgrade,
         comparison_upgrades: selectionKeys,
         include_uncertainty: this.showUncertainty(),
+        uncertainty_band: this.uncertaintyBand(),
       })
       .subscribe({
         next: (result) => {

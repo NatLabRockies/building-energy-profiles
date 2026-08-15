@@ -4,6 +4,16 @@ This file mirrors `src/building_energy_profiles/energy_star_crosswalk.json` in a
 
 This is a best-effort crosswalk authored for building_energy_profiles, **not** an official NLR or EPA publication. ENERGY STAR Portfolio Manager's property types are far more granular (and organized differently) than BuildStock's building types, which come from DOE's commercial prototype building models (ComStock) and simplified residential housing categories (ResStock). Several ENERGY STAR property types have no close BuildStock equivalent at all -- those rows have match_quality = unmapped and empty product/building-type columns.
 
+## Size-tiered refinement (Office)
+
+A handful of ComStock building types are split into multiple size tiers of the same use (currently just Office: `SmallOffice`/`MediumOffice`/`LargeOffice`). Generic property types with no size indicator of their own -- currently just **"Office"** -- default to the table below (`MediumOffice`), but `api/services.py`'s `resolve_composite()` (used by the `/composite/resolve` endpoint and the webapp's Composite Builder) refines that default once an actual square footage is entered (sqft mode), via `refine_building_type_for_sqft()`. It picks whichever tier's DOE reference-prototype floor area -- `SmallOffice` 5,500 sqft, `MediumOffice` 53,600 sqft, `LargeOffice` 498,588 sqft (Deru et al., NREL/TP-5500-46861) -- is the closest fit to the entered sqft on a log scale, e.g.:
+
+- < ~17,170 sqft -> `SmallOffice`
+- ~17,170-163,460 sqft -> `MediumOffice`
+- \> ~163,460 sqft -> `LargeOffice`
+
+Property types that map to an office building type for unrelated reasons (e.g. "Bank Branch" -> `SmallOffice` for its typical scale, or "Laboratory" -> `LargeOffice` as a rough proxy for its plug-load profile) are **not** refined by sqft -- their crosswalk mapping is intentional regardless of the entered size.
+
 - Total ENERGY STAR property types: 84
 - exact matches: 13
 - approximate matches: 65

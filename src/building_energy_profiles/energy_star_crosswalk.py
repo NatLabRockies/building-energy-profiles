@@ -16,6 +16,7 @@ importing Python, while this module exposes a small Python-friendly lookup API f
 from __future__ import annotations
 
 import json
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 from functools import cache
@@ -80,6 +81,48 @@ def map_energy_star_property_type(property_type: str) -> EnergyStarMapping | Non
     see `list_energy_star_property_types()` for the full supported list.
     """
     return _crosswalk_by_property_type().get(property_type.strip().casefold())
+
+
+# DOE commercial reference/prototype building total floor areas (sq ft) for ComStock's three office-size
+# building types (Deru et al., "U.S. Department of Energy Commercial Reference Building Models of the
+# National Building Stock", NREL/TP-5500-46861, 2011) -- these are the "typical" sizes each prototype was
+# originally built to represent, used here only to size-tier a *generic* ENERGY STAR property type once an
+# actual target square footage is known (see `_SIZE_TIERED_PROPERTY_TYPES`/`refine_building_type_for_sqft`).
+_OFFICE_SIZE_TIERS: tuple[tuple[str, float], ...] = (
+    ("SmallOffice", 5_500.0),
+    ("MediumOffice", 53_600.0),
+    ("LargeOffice", 498_588.0),
+)
+
+# ENERGY STAR property type (casefolded) -> its size tiers, restricted to property types whose crosswalk
+# entry is explicitly a size-ambiguous default (see that entry's own `notes`, e.g. "Office" -> MediumOffice,
+# "used as the default... Use SmallOffice/LargeOffice when building size is known") -- NOT every property
+# type that happens to map to an office building type as a rough proxy for unrelated reasons (e.g.
+# "Laboratory" -> LargeOffice, chosen for its plug-load profile rather than size), which should keep their
+# crosswalk mapping regardless of any entered square footage.
+_SIZE_TIERED_PROPERTY_TYPES: dict[str, tuple[tuple[str, float], ...]] = {
+    "office": _OFFICE_SIZE_TIERS,
+}
+
+
+def refine_building_type_for_sqft(property_type: str, sqft: float) -> str | None:
+    """Refine a generic, size-ambiguous ENERGY STAR property type's crosswalk building type using an actual
+    target square footage -- e.g. "Office" (crosswalk default: MediumOffice) resolves to "SmallOffice" for
+    a 5,000 sqft building or "LargeOffice" for a 300,000 sqft one, picking whichever of `_OFFICE_SIZE_TIERS`
+    is the best fit for `sqft`.
+
+    Comparison is done on a log scale (comparing `sqft` against the geometric-mean breakpoint between each
+    pair of adjacent tiers) since the reference floor areas span nearly two orders of magnitude -- a plain
+    linear nearest-value comparison would almost always pick the largest tier.
+
+    Returns `None` -- meaning "keep the crosswalk's original static mapping" -- if `property_type` isn't
+    one of the packaged size-tiered types (see `_SIZE_TIERED_PROPERTY_TYPES`) or `sqft` isn't positive.
+    """
+    tiers = _SIZE_TIERED_PROPERTY_TYPES.get(property_type.strip().casefold())
+    if not tiers or sqft <= 0:
+        return None
+    log_sqft = math.log(sqft)
+    return min(tiers, key=lambda tier: abs(math.log(tier[1]) - log_sqft))[0]
 
 
 def energy_star_property_types_for_buildstock_type(buildstock_product: str, buildstock_building_type: str) -> tuple[str, ...]:

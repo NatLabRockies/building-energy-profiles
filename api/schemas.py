@@ -100,6 +100,14 @@ class CompositeComponentSpec(BaseModel):
     metadata functions. See `api/services.py`'s `CURATED_FILTER_COLUMNS` for the columns exposed via
     `GET/POST .../composite/filter-options`; an unrecognized column for this component's product is
     silently ignored rather than raising."""
+    min_sqft: float | None = Field(default=None, gt=0.0)
+    max_sqft: float | None = Field(default=None, gt=0.0)
+    """Optional floor-area (`in.sqft`) bounds narrowing this component's sampled population -- the numeric
+    counterpart of `filters`, applied at the same 3 endpoints (see `filters`'s docstring) via
+    `api/services.py`'s `_apply_component_sqft_range`. Distinct from `CompositeRequestBase.min_sqft`/
+    `max_sqft`, which bound the whole request's *every* component identically at metadata-download time
+    (before this component-specific, post-download narrowing) rather than letting each component in a
+    mixed-use composite narrow independently."""
 
 
 class CompositeResolveResponse(BaseModel):

@@ -10,6 +10,7 @@ from building_energy_profiles import (
     energy_star_property_types_for_buildstock_type,
     list_energy_star_property_types,
     map_energy_star_property_type,
+    refine_building_type_for_sqft,
 )
 
 
@@ -101,3 +102,38 @@ class TestEnergyStarCrosswalk:
     @pytest.mark.unit
     def test_energy_star_property_types_for_buildstock_type_returns_empty_for_unknown_type(self):
         assert energy_star_property_types_for_buildstock_type("comstock", "NotARealBuildingType") == ()
+
+
+class TestRefineBuildingTypeForSqft:
+    """Test size-tiering a generic ENERGY STAR property type (currently just "Office") by target sqft."""
+
+    @pytest.mark.unit
+    def test_small_sqft_refines_to_small_office(self):
+        assert refine_building_type_for_sqft("Office", 5_000) == "SmallOffice"
+
+    @pytest.mark.unit
+    def test_mid_sqft_refines_to_medium_office(self):
+        # The user's own worked example: a 50,000 sqft office should land on MediumOffice, not the
+        # crosswalk's literal default of MediumOffice by coincidence -- confirmed by also checking a
+        # value near the DOE medium-office reference size (53,600 sqft).
+        assert refine_building_type_for_sqft("Office", 50_000) == "MediumOffice"
+        assert refine_building_type_for_sqft("Office", 53_600) == "MediumOffice"
+
+    @pytest.mark.unit
+    def test_large_sqft_refines_to_large_office(self):
+        assert refine_building_type_for_sqft("Office", 300_000) == "LargeOffice"
+
+    @pytest.mark.unit
+    def test_is_case_insensitive(self):
+        assert refine_building_type_for_sqft("office", 5_000) == refine_building_type_for_sqft("Office", 5_000)
+
+    @pytest.mark.unit
+    def test_non_size_tiered_property_type_returns_none(self):
+        # "Bank Branch" maps to SmallOffice for its own reasons (a bank's typical scale), not because its
+        # size is unknown -- entering a large sqft shouldn't retarget it to a different office tier.
+        assert refine_building_type_for_sqft("Bank Branch", 300_000) is None
+
+    @pytest.mark.unit
+    def test_non_positive_sqft_returns_none(self):
+        assert refine_building_type_for_sqft("Office", 0) is None
+        assert refine_building_type_for_sqft("Office", -100) is None

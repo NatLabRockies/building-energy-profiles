@@ -64,6 +64,7 @@ from building_energy_profiles.data_dictionary import result_variables_from_colum
 from building_energy_profiles.energy_star_crosswalk import (
     energy_star_crosswalk,
     map_energy_star_property_type,
+    refine_building_type_for_sqft,
 )
 from building_energy_profiles.resstock import ResStockProcessor
 
@@ -196,6 +197,29 @@ def _apply_component_filters(metadata: pd.DataFrame, filters: dict[str, list[str
             continue
         metadata = metadata[metadata[matched_column].astype(str).isin(allowed_values)]
     return metadata
+
+
+def _apply_component_sqft_range(metadata: pd.DataFrame, min_sqft: float | None, max_sqft: float | None) -> pd.DataFrame:
+    """Narrow `metadata` to rows whose floor area (`in.sqft`) falls within `[min_sqft, max_sqft]` (either
+    bound optional) -- the numeric floor-area counterpart of `_apply_component_filters`'s categorical
+    column filters, for the same "narrow the population" UI control (see `CompositeComponentSpec.min_sqft`/
+    `max_sqft`).
+
+    A no-op if both bounds are `None`, or if `metadata` has no usable floor-area column, rather than
+    raising -- consistent with `_apply_component_filters`'s "silently skip what doesn't apply" behavior.
+    """
+    if min_sqft is None and max_sqft is None:
+        return metadata
+    sqft_column = _find_column(metadata.columns, "in.sqft")
+    if not sqft_column:
+        return metadata
+    sqft = pd.to_numeric(metadata[sqft_column], errors="coerce")
+    mask = pd.Series(True, index=metadata.index)
+    if min_sqft is not None:
+        mask &= sqft >= min_sqft
+    if max_sqft is not None:
+        mask &= sqft <= max_sqft
+    return metadata[mask]
 
 
 def _target_sqft_map(components: list[CompositeComponentSpec]) -> dict[tuple[str, str], float] | None:
@@ -360,17 +384,24 @@ def resolve_composite(request: CompositeResolveRequest, settings: Settings) -> C
             unmapped.append(entry.energy_star_property_type)
             continue
 
+        # A generic, size-ambiguous crosswalk entry (currently just "Office" -- see
+        # `refine_building_type_for_sqft`) gets its building type refined by the actual requested square
+        # footage instead of always using the crosswalk's single static default (e.g. "Office" always
+        # defaulting to MediumOffice even for a 5,000 sqft or 300,000 sqft building).
+        building_type = mapping.buildstock_building_type
+        notes = mapping.notes
+        if sqft_mode and entry.sqft and mapping.buildstock_product == "comstock" and building_type:
+            refined_building_type = refine_building_type_for_sqft(entry.energy_star_property_type, entry.sqft)
+            if refined_building_type and refined_building_type != building_type:
+                notes = f"{notes} Refined to {refined_building_type} based on the entered {entry.sqft:,.0f} sqft."
+                building_type = refined_building_type
+
         bldg_id: int | None = None
-        if (
-            select_bldg_ids
-            and entry.sqft is not None
-            and mapping.buildstock_product is not None
-            and mapping.buildstock_building_type is not None
-        ):
+        if select_bldg_ids and entry.sqft is not None and mapping.buildstock_product is not None and building_type is not None:
             # request.state is guaranteed non-None here: select_bldg_ids is only True when it was set.
             bldg_id = _select_bldg_id_for_sqft(
                 mapping.buildstock_product,
-                mapping.buildstock_building_type,
+                building_type,
                 entry.sqft,
                 request.state or "",
                 request.county_name,
@@ -382,12 +413,12 @@ def resolve_composite(request: CompositeResolveRequest, settings: Settings) -> C
             ResolvedComponent(
                 energy_star_property_type=entry.energy_star_property_type,
                 product=mapping.buildstock_product,
-                building_type=mapping.buildstock_building_type,
+                building_type=building_type,
                 fraction=entry_fraction,
                 sqft=entry.sqft,
                 bldg_id=bldg_id,
                 match_quality=mapping.match_quality,
-                notes=mapping.notes,
+                notes=notes,
             )
         )
         if mapping.match_quality == "unmapped":
@@ -454,6 +485,7 @@ def get_building_distributions(request: BuildingDistributionRequest, settings: S
             )
             metadata = processor.process_metadata(save_dir=processor.base_dir)
             metadata = _apply_component_filters(metadata, component.filters)
+            metadata = _apply_component_sqft_range(metadata, component.min_sqft, component.max_sqft)
             distribution = compute_building_distribution(metadata, bins=request.bins)
         except Exception as exc:
             warnings.append(f"Could not compute a building distribution for {label} ({component.product}): {exc}")
@@ -579,8 +611,13 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
             raise ServiceError(f"Failed to download metadata for {component.building_type} ({component.product}): {exc}") from exc
 
         metadata = _apply_component_filters(metadata, component.filters)
+        metadata = _apply_component_sqft_range(metadata, component.min_sqft, component.max_sqft)
         if metadata.empty:
-            reason = "the applied filters excluded every sampled building" if component.filters else f"in state={request.state!r}"
+            reason = (
+                "the applied filters excluded every sampled building"
+                if (component.filters or component.min_sqft or component.max_sqft)
+                else f"in state={request.state!r}"
+            )
             raise ServiceError(f"No buildings found for {component.building_type} ({component.product}) -- {reason}.")
 
         sqft_column = _find_column(metadata.columns, "in.sqft")
@@ -830,8 +867,13 @@ def _pull_timeseries(
         else:
             metadata = processor.process_metadata(save_dir=processor.base_dir)
             metadata = _apply_component_filters(metadata, component.filters)
+            metadata = _apply_component_sqft_range(metadata, component.min_sqft, component.max_sqft)
             if metadata.empty:
-                reason = "the applied filters excluded every sampled building" if component.filters else f"in state={state!r}"
+                reason = (
+                    "the applied filters excluded every sampled building"
+                    if (component.filters or component.min_sqft or component.max_sqft)
+                    else f"in state={state!r}"
+                )
                 raise ServiceError(f"No buildings found for {key} -- {reason}.")
             if sample_bldg_id is not None:
                 metadata = metadata[metadata["bldg_id"] == sample_bldg_id]

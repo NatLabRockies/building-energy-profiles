@@ -42,6 +42,11 @@
     strong {
       color: var(--color-text);
     }
+
+    .sqft-delta {
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
   }
 
   .filter-badge {
@@ -74,6 +79,24 @@
     grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
     gap: 1rem;
     margin: 0.75rem 0;
+  }
+
+  .sqft-range {
+    display: flex;
+    gap: 1rem;
+    margin: 0.75rem 0;
+
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 0.25rem;
+      font-size: 0.8rem;
+      color: var(--color-muted);
+    }
+
+    input {
+      width: 8rem;
+    }
   }
 
   .filter-column {

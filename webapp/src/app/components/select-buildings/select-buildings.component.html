@@ -86,6 +86,9 @@
         }
       </h3>
       <p class="population-note">Population mean: {{ vm.dist.mean_value | number: '1.1-1' }} {{ vm.dist.unit }}</p>
+      @if (vm.targetSqft != null) {
+        <p class="population-note">Requested floor area: {{ vm.targetSqft | number: '1.0-0' }} sqft</p>
+      }
       <div class="chart-canvas-wrap">
         <app-chart type="line" [data]="vm.chartData" [options]="vm.chartOptions"></app-chart>
       </div>
@@ -99,17 +102,57 @@
             {{ percentileLabels[key] }}
           </button>
         }
+        @if (vm.targetSqft != null) {
+          <button type="button" (click)="selectNearestSqft(vm.dist, vm.targetSqft)">Closest to requested sqft</button>
+        }
       </div>
       @if (vm.selection) {
         <p class="selection-summary">
           Selected: <strong>bldg_id {{ vm.selection.bldgId }}</strong> &middot;
           {{ vm.selection.value | number: '1.1-1' }} {{ vm.dist.unit }}
+          @if (vm.selection.sqft != null) {
+            &middot; {{ vm.selection.sqft | number: '1.0-0' }} sqft
+            @if (vm.targetSqft != null) {
+              <span class="sqft-delta">({{ vm.selection.sqft - vm.targetSqft >= 0 ? '+' : '' }}{{ vm.selection.sqft - vm.targetSqft | number: '1.0-0' }} sqft vs. requested)</span>
+            }
+          }
         </p>
       }
 
-      @if (vm.filterColumns.length > 0) {
-        <details class="filters-panel">
-          <summary>Narrow the population&hellip;</summary>
+      <details class="filters-panel">
+        <summary>Narrow the population&hellip;</summary>
+        @if (vm.isMultifamily) {
+          <p class="filters-hint">
+            Floor-area filtering isn't available for multifamily -- each sampled row is one dwelling unit's
+            size, not the whole building's.
+          </p>
+        } @else {
+          <div class="sqft-range">
+            <label>
+              Min sqft
+              <input
+                type="number"
+                min="0"
+                step="500"
+                placeholder="No min"
+                [ngModel]="vm.draftSqftRange.min"
+                (ngModelChange)="onSqftRangeChange(vm.key, 'min', $event)"
+              />
+            </label>
+            <label>
+              Max sqft
+              <input
+                type="number"
+                min="0"
+                step="500"
+                placeholder="No max"
+                [ngModel]="vm.draftSqftRange.max"
+                (ngModelChange)="onSqftRangeChange(vm.key, 'max', $event)"
+              />
+            </label>
+          </div>
+        }
+        @if (vm.filterColumns.length > 0) {
           <div class="filter-columns">
             @for (column of vm.filterColumns; track column.column) {
               <label class="filter-column">
@@ -124,17 +167,17 @@
               </label>
             }
           </div>
-          <div class="filter-actions">
-            <button type="button" [disabled]="vm.refreshing" (click)="applyFilters(vm.dist)">
-              {{ vm.refreshing ? 'Applying…' : 'Apply filters' }}
-            </button>
-            @if (vm.appliedFilterCount > 0) {
-              <button type="button" [disabled]="vm.refreshing" (click)="clearFilters(vm.dist)">Clear filters</button>
-            }
-          </div>
-          <p class="filters-hint">Hold Ctrl/Cmd to select multiple values within a column.</p>
-        </details>
-      }
+        }
+        <div class="filter-actions">
+          <button type="button" [disabled]="vm.refreshing" (click)="applyFilters(vm.dist)">
+            {{ vm.refreshing ? 'Applying…' : 'Apply filters' }}
+          </button>
+          @if (vm.appliedFilterCount > 0) {
+            <button type="button" [disabled]="vm.refreshing" (click)="clearFilters(vm.dist)">Clear filters</button>
+          }
+        </div>
+        <p class="filters-hint">Hold Ctrl/Cmd to select multiple values within a column.</p>
+      </details>
     </section>
   }
 

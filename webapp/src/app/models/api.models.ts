@@ -54,6 +54,11 @@ export interface CompositeComponentSpec {
    * (OR within a column, AND across columns). Applied by the building-distribution, metadata-summary, and
    * single-component time-series endpoints. */
   filters?: Record<string, string[]> | null;
+  /** Optional floor-area (in.sqft) bounds narrowing this component's sampled population -- the numeric
+   * counterpart of `filters`, for the same "narrow the population" UI control. Distinct from
+   * CompositeRequestBase.min_sqft/max_sqft, which bound every component in a request identically. */
+  min_sqft?: number | null;
+  max_sqft?: number | null;
 }
 
 export interface CompositeResolveResponse {

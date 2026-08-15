@@ -79,6 +79,22 @@
         selected), combined across composite components -- a robust, real building-to-building variability
         estimate, not simulation error.
       </p>
+      <label class="uncertainty-band">
+        Neighborhood band: &plusmn;
+        <input
+          type="number"
+          min="1"
+          max="50"
+          step="1"
+          [ngModel]="uncertaintyBand()"
+          (ngModelChange)="setUncertaintyBand($event)"
+        />
+        percentile points
+      </label>
+      <p class="chart-note">
+        Smaller = a tighter (narrower) uncertainty range, computed from a smaller population of more
+        similar buildings near each selection; larger = a looser range from a broader population.
+      </p>
     }
 
     <button class="primary" (click)="compare()" [disabled]="comparing() || selectedKeys().size === 0">
