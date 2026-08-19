@@ -22,7 +22,7 @@ describe('AppComponent', () => {
     fixture.detectChanges();
     const compiled = fixture.nativeElement as HTMLElement;
     expect(compiled.querySelector('mat-sidenav.app-sidenav')).toBeTruthy();
-    expect(compiled.querySelector('.brand-title')?.textContent).toContain('BuildStock');
+    expect(compiled.querySelector('.brand-title')?.textContent).toContain('Building Energy Profiles');
     expect(compiled.querySelector('.brand-subtitle')?.textContent).toContain('Composite Explorer');
     const navLinks = compiled.querySelectorAll('mat-nav-list a[mat-list-item]');
     expect(navLinks.length).toBe(5);
