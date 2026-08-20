@@ -37,7 +37,7 @@ export class AppComponent {
   private readonly breakpointObserver = inject(BreakpointObserver);
   private readonly router = inject(Router);
 
-  title = 'BuildStock Composite Building Explorer';
+  title = 'Building Energy Profiles Composite Explorer';
 
   // Left-nav items, in display order.
   readonly navItems: NavItem[] = [
