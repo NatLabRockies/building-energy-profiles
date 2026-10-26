@@ -354,6 +354,45 @@ class BuildStockProcessor(ABC):
         paths, building_ids = zip(*results) if results else ([], [])
         return list(paths), list(building_ids)
 
+    def building_energy_model_url(self, building_id: int | str, upgrade: str | None = None) -> str:
+        """Return the public URL for one building's energy model file, defaulting `upgrade` to
+        `self.upgrade`.
+
+        Alias for `model_file_url()` under the name expected by downstream consumers (e.g. the
+        building-energy-profiles-mcp server's `ProcessorProtocol`) that don't have a specific upgrade of
+        their own to pass.
+        """
+        return self.model_file_url(building_id, self.upgrade if upgrade is None else upgrade)
+
+    def download_building_energy_models(self, bldg_ids: list[int | str], save_dir: Path, upgrade: str | None = None) -> list[Path]:
+        """Download this processor's building energy model file for each id in `bldg_ids`, in parallel.
+
+        Thin wrapper around `download_building_model()` matching the interface expected by downstream
+        consumers (e.g. the building-energy-profiles-mcp server) that pass a plain list of `bldg_id`s
+        directly, rather than a metadata `DataFrame` (see `download_building_models()`).
+
+        Args:
+            bldg_ids (list[int | str]): building ids to download models for.
+            save_dir (Path): directory to save the downloaded model files. Created if it doesn't exist.
+            upgrade (str | None): which upgrade's models to download. Defaults to `self.upgrade`.
+
+        Returns:
+            list[Path]: the saved file paths, in the same order as `bldg_ids`.
+        """
+        save_dir.mkdir(parents=True, exist_ok=True)
+
+        def download_task(building_id: int | str) -> Path:
+            return self.download_building_model(building_id, save_dir, upgrade=upgrade)
+
+        with ThreadPoolExecutor(max_workers=self.IO_WORKERS) as executor:
+            return list(
+                tqdm(
+                    executor.map(download_task, bldg_ids),
+                    total=len(bldg_ids),
+                    desc=f"Downloading {self.product_name} building energy models",
+                )
+            )
+
     @staticmethod
     def _model_upgrade_label(upgrade: str) -> str:
         """The two-digit, zero-padded upgrade id used in every building energy model *filename*,
