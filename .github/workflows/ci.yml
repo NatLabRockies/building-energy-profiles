@@ -19,6 +19,10 @@ jobs:
     defaults:
       run:
         shell: bash # for windows and linux
+    env:
+      # Keep CI strict while running the Makefile targets: fail if uv.lock is out of date and use short tracebacks.
+      UV_LOCKED: "1"
+      PYTEST_ADDOPTS: --tb=short
     steps:
       - uses: actions/checkout@v7
       - name: Install uv and set up Python ${{ matrix.python-version }}
@@ -26,11 +30,14 @@ jobs:
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}
+      - name: Install make (Windows)
+        if: runner.os == 'Windows'
+        run: choco install make --no-progress -y
       - name: Install dependencies
-        run: uv sync --locked --group dev --group api
+        run: make install-python
       - name: Run pre-commit
-        run: uv run pre-commit run --all-files
+        run: make lint
       - name: Run unit tests
-        run: uv run pytest tests/ -v --tb=short -m "unit"
+        run: make test-unit
       - name: Run integration tests (fast)
-        run: uv run pytest tests/ -v --tb=short -m "integration"
+        run: make test-integration
