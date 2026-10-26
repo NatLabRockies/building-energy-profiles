@@ -364,9 +364,7 @@ class BuildStockProcessor(ABC):
         """
         return self.model_file_url(building_id, self.upgrade if upgrade is None else upgrade)
 
-    def download_building_energy_models(
-        self, bldg_ids: list[int | str], save_dir: Path, upgrade: str | None = None
-    ) -> list[Path]:
+    def download_building_energy_models(self, bldg_ids: list[int | str], save_dir: Path, upgrade: str | None = None) -> list[Path]:
         """Download this processor's building energy model file for each id in `bldg_ids`, in parallel.
 
         Thin wrapper around `download_building_model()` matching the interface expected by downstream
