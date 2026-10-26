@@ -232,4 +232,8 @@ export class TimeseriesComponent implements OnInit {
         },
       });
   }
+
+  continueToMeasures(): void {
+    this.router.navigate(['/measures']);
+  }
 }

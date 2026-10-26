@@ -8,6 +8,13 @@
   margin-left: 0.35rem;
 }
 
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  margin-top: 1.5rem;
+}
+
 .model-download-link {
   display: inline-block;
   border: 1px solid var(--color-primary);

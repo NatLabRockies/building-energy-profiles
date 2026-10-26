@@ -20,6 +20,10 @@ updates:
       interval: "weekly"
     allow:
       - dependency-type: "direct"
+    ignore:
+      # Angular's compiler-cli supports TypeScript >=6.0 <6.1 only
+      - dependency-name: "typescript"
+        versions: [">=6.1.0"]
     groups:
       dev-deps:
         dependency-type: "development"

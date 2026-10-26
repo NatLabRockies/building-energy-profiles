@@ -109,4 +109,8 @@ export class DashboardComponent implements OnInit {
     }
     return this.api.getModelDownloadUrl(component.product, component.selected_bldg_id, this.compositeState.upgrade());
   }
+
+  continueToTimeseries(): void {
+    this.router.navigate(['/timeseries']);
+  }
 }
