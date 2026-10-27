@@ -30,14 +30,14 @@ BuildStock data in a browser. The webapp uses [pnpm](https://pnpm.io) (enable it
 ships with Node.js). Install the extra dependencies, then run both together with:
 
 ```bash
-uv sync --group dev --group api
-cd webapp && pnpm install && cd ..
-
+make install
 make dev
 ```
 
-`make dev` runs [`dev.sh`](dev.sh), which starts the FastAPI backend at http://localhost:8000 and the Angular
-frontend at http://localhost:4200, and stops both on Ctrl+C.
+`make install` runs `uv sync --group dev --group api` and `pnpm install` in `webapp/`. `make dev` runs
+[`dev.sh`](dev.sh), which starts the FastAPI backend at http://localhost:8000 and the Angular frontend at
+http://localhost:4200, and stops both on Ctrl+C. Run `make help` to list the other targets (`test`, `lint`,
+`format`, `typecheck`, `build`, `clean`).
 
 ## Documentation
 
