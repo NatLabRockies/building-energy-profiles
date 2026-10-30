@@ -54,6 +54,7 @@ building's combined profile each component contributes, most commonly a floor-ar
 from __future__ import annotations
 
 import math
+import tempfile
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -540,3 +541,176 @@ def pull_composite_time_series(
         weights = resolve_fraction_weights(composite, component_sqft, total_sqft) if needs_sqft else None
     combined = combine_composite_time_series(composite, component_time_series, value_columns=value_columns, weights=weights)
     return combined, component_time_series
+
+
+IDEAL_THERMAL_AIR_LOADS_UPGRADE_NAME = "Ideal Thermal Air Loads"
+
+# Columns that must be populated for a building to be chosen by pull_sized_time_series.
+REQUIRED_TIME_SERIES_COLUMNS: dict[str, list[str]] = {
+    "comstock": [
+        "out.district_cooling.cooling.energy_consumption",
+        "out.district_heating.heating.energy_consumption",
+    ],
+    "resstock": [
+        "out.load.cooling.energy_delivered",
+        "out.load.heating.energy_delivered",
+    ],
+}
+
+
+def pull_sized_time_series(
+    building_type: str,
+    sqft: float,
+    state: str,
+    save_dir: Path,
+    product: str = "comstock",
+    upgrade: str = "0",
+    ideal_thermal_air_loads: bool = False,
+    county_name: str | list[str] = "All",
+    release: str | None = None,
+    value_columns: list[str] | None = None,
+    sqft_tolerance_pct: float = 10.0,
+    cache_metadata: bool = False,
+    max_candidates: int = 10,
+) -> pd.DataFrame:
+    """Time series for a single building type scaled to an absolute floor area.
+
+    Selects the sampled buildings in `state` whose floor area is within `sqft_tolerance_pct` percent of
+    `sqft`, builds the site EUI distribution of those buildings, and picks the one closest to the median
+    EUI. Its time series is downloaded and every numeric `out.*` column is linearly scaled by
+    `sqft / representative_sqft`.
+
+    `product` may be "comstock" or "resstock". `ideal_thermal_air_loads=True` only takes effect for ComStock
+    (ResStock has no such upgrade) and is silently ignored for ResStock, which uses `upgrade` as given.
+    With it enabled, the ComStock "Ideal Thermal Air Loads" upgrade is looked up by name
+    in the release's upgrade list (IDs differ between releases) and used instead of `upgrade`. The same
+    representative building is used for the baseline and the upgrade when it exists in both.
+
+    If a required column is missing or entirely NaN for the chosen building, the next-closest-
+    to-median building is tried, up to `max_candidates` buildings, before raising `ValueError`. The required
+    columns are `value_columns` when given, otherwise the product's heating/cooling columns in
+    `REQUIRED_TIME_SERIES_COLUMNS` (other default columns may be NaN).
+
+    Returns a DataFrame with `timestamp` plus the scaled columns (`value_columns`, or every numeric `out.*`
+    column by default). `.attrs` records `bldg_id`, `representative_sqft`, `scale`, and `upgrade`.
+
+    By default only the selected building's time series parquet is kept under `save_dir`; metadata, raw
+    partitions, and upgrade lookups go to a temporary directory deleted on return. With `cache_metadata=True`
+    they are cached under `save_dir` and reused by later calls (faster, but uses more disk space).
+    """
+    # The upgrade only exists for ComStock, so the flag is ignored for ResStock.
+    ideal_thermal_air_loads = ideal_thermal_air_loads and product.strip().lower() == "comstock"
+    args = (product, upgrade, ideal_thermal_air_loads,
+            county_name, release, value_columns, sqft_tolerance_pct, max_candidates,)
+    if cache_metadata:
+        return _pull_sized_time_series(building_type, sqft, state, save_dir, None, *args)
+    with tempfile.TemporaryDirectory() as tmp:
+        return _pull_sized_time_series(building_type, sqft, state, save_dir, Path(tmp), *args)
+
+
+def _pull_sized_time_series(
+    building_type: str,
+    sqft: float,
+    state: str,
+    save_dir: Path,
+    meta_dir: Path | None,
+    product: str,
+    upgrade: str,
+    ideal_thermal_air_loads: bool,
+    county_name: str | list[str],
+    release: str | None,
+    value_columns: list[str] | None,
+    sqft_tolerance_pct: float,
+    max_candidates: int,
+) -> pd.DataFrame:
+    # Anything other than "comstock" falls back to ResStock.
+    cls: type[BuildStockProcessor] = ComStockProcessor if product.strip().lower() == "comstock" else ResStockProcessor
+    # Shared processor arguments; base_dir includes sqft so different sizes don't share a cache folder.
+    kwargs: dict[str, object] = {
+        "state": state, 
+        "county_name": county_name, 
+        "building_type": building_type, 
+        "base_dir": Path(save_dir) / product.strip().lower() / (building_type.strip().lower() + f'-{sqft}')
+    }
+    
+    if release:
+        kwargs["release"] = release
+    Path(kwargs["base_dir"]).mkdir(parents=True, exist_ok=True)  # type: ignore[arg-type]
+    if meta_dir is None:
+        meta_dir = Path(kwargs["base_dir"])  # type: ignore[arg-type]
+
+    # Upgrade IDs differ between releases, so resolve the Ideal Thermal Air Loads upgrade by name.
+    if ideal_thermal_air_loads:
+        upgrades = cls(upgrade="0", **kwargs).list_upgrades(save_dir=meta_dir)
+        matches = [uid for uid, name in upgrades.items() if name.strip().lower() == IDEAL_THERMAL_AIR_LOADS_UPGRADE_NAME.lower()]
+        if not matches:
+            raise ValueError(f"No '{IDEAL_THERMAL_AIR_LOADS_UPGRADE_NAME}' upgrade found in this release: {upgrades}")
+        upgrade = str(matches[0])
+
+    # Choose the building from baseline metadata so the same building is used across upgrades.
+    baseline = cls(upgrade="0", **kwargs).process_metadata(save_dir=meta_dir)
+    if baseline.empty:
+        raise ValueError(f"No {building_type} buildings found in state={state!r}.")
+    sqft_column = next((c for c in baseline.columns if c.startswith("in.sqft")), None)
+    if sqft_column is None:
+        raise ValueError("Could not find a floor-area column in metadata.")
+    # Step 1: keep only buildings whose floor area is within +/- sqft_tolerance_pct of the requested size.
+    sqft_values = pd.to_numeric(baseline[sqft_column], errors="coerce")
+    tolerance = abs(sqft) * sqft_tolerance_pct / 100.0
+    in_range = baseline[(sqft_values - sqft).abs() <= tolerance]
+    if in_range.empty:
+        raise ValueError(
+            f"No {building_type} buildings within {sqft_tolerance_pct}% of {sqft} sqft found in state={state!r}; "
+            "increase sqft_tolerance_pct."
+        )
+    # Step 2: build the site EUI distribution of those buildings and take its median. band=50 around the
+    # 50th percentile spans the whole in-range set; the returned building is the real one closest to the
+    # median EUI.
+    selection = select_building_condition_sample(in_range, percentile=50.0, band=50.0, sqft_column=sqft_column)
+    # Candidates ordered by closeness to the median building (`bldg_ids` is sorted by EUI).
+    ordered = selection.bldg_ids
+    position = {b: i for i, b in enumerate(ordered)}
+    median_pos = position[selection.median_bldg_id]
+    candidates = sorted(ordered, key=lambda b: abs(position[b] - median_pos))
+    candidates = candidates[:max_candidates]
+
+    # Step 3: pull the median building's time series under the requested upgrade (the ideal thermal air
+    # loads upgrade when enabled). If the requested columns are missing or entirely NaN, fall back to the
+    # next-closest-to-median building.
+    processor = cls(upgrade=upgrade, **kwargs)
+    metadata = baseline if upgrade == "0" else processor.process_metadata(save_dir=meta_dir)
+    ts_dir = processor.base_dir / "timeseries" / f"upgrade_{upgrade}"
+    ts_dir.mkdir(parents=True, exist_ok=True)
+    rejected: list[str] = []
+    for bldg_id in candidates:
+        sample = metadata[metadata["bldg_id"] == bldg_id]
+        if sample.empty:
+            rejected.append(f"{bldg_id} (not in upgrade {upgrade})")
+            continue
+        paths, _ = processor.process_building_time_series(sample[["bldg_id", "in.state"]].head(1), save_dir=ts_dir)
+        if not paths or not Path(paths[0]).exists():
+            rejected.append(f"{bldg_id} (download failed)")
+            continue
+        data = normalize_time_series_columns(pd.read_parquet(paths[0]))
+        columns = value_columns
+        if columns is None:
+            columns = [c for c in data.columns if c.startswith("out.") and pd.api.types.is_numeric_dtype(data[c])]
+        # Only the key columns must be populated; other default columns are legitimately NaN for many buildings.
+        required = value_columns or REQUIRED_TIME_SERIES_COLUMNS.get(product.strip().lower(), REQUIRED_TIME_SERIES_COLUMNS["resstock"])
+        bad = [c for c in required if c not in data.columns or data[c].isna().all()]
+        if bad:
+            rejected.append(f"{bldg_id} (missing/all-NaN: {bad})")
+            print(f"Skipping building {bldg_id}: missing/all-NaN columns {bad}")
+            Path(paths[0]).unlink(missing_ok=True)
+            continue
+        break
+    else:
+        raise ValueError(f"No {building_type} building had populated time series columns (upgrade {upgrade}); tried: {rejected}")
+
+    representative_sqft = float(baseline.loc[baseline["bldg_id"] == bldg_id, sqft_column].iloc[0])
+    # Step 4: linearly scale from the representative building's floor area to the requested one.
+    scale = sqft / representative_sqft
+    result = data[["timestamp", *columns]].copy()
+    result[columns] = result[columns].astype(float) * scale
+    result.attrs.update(bldg_id=bldg_id, representative_sqft=representative_sqft, scale=scale, upgrade=upgrade)
+    return result
