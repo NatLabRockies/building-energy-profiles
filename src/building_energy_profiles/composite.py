@@ -675,12 +675,17 @@ def _pull_sized_time_series(
     # 50th percentile spans the whole in-range set; the returned building is the real one closest to the
     # median EUI.
     selection = select_building_condition_sample(in_range, percentile=50.0, band=50.0, sqft_column=sqft_column)
-    # Candidates ordered by closeness to the median building (`bldg_ids` is sorted by EUI).
-    ordered = selection.bldg_ids
-    position = {b: i for i, b in enumerate(ordered)}
-    median_pos = position[selection.median_bldg_id]
-    candidates = sorted(ordered, key=lambda b: abs(position[b] - median_pos))
-    candidates = candidates[:max_candidates]
+    # Candidates ordered by absolute distance from the median EUI.
+    energy_column = next(
+        c for c in in_range.columns
+        if c == "out.site_energy.total.energy_consumption"
+        or c.startswith("out.site_energy.total.energy_consumption..")
+    )
+    eligible = in_range[in_range["bldg_id"].isin(selection.bldg_ids)]
+    eui = pd.to_numeric(eligible[energy_column], errors="coerce") / pd.to_numeric(eligible[sqft_column], errors="coerce")
+    eui_by_id = dict(zip(eligible["bldg_id"], eui))
+    median_eui = float(eui.median())
+    candidates = sorted(selection.bldg_ids, key=lambda b: abs(eui_by_id[b] - median_eui))[:max_candidates]
 
     # Step 3: pull the median building's time series under the requested upgrade (the ideal thermal air
     # loads upgrade when enabled). If the requested columns are missing or entirely NaN, fall back to the
