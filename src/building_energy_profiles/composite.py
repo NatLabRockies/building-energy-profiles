@@ -677,9 +677,9 @@ def _pull_sized_time_series(
     selection = select_building_condition_sample(in_range, percentile=50.0, band=50.0, sqft_column=sqft_column)
     # Candidates ordered by absolute distance from the median EUI.
     energy_column = next(
-        c for c in in_range.columns
-        if c == "out.site_energy.total.energy_consumption"
-        or c.startswith("out.site_energy.total.energy_consumption..")
+        c
+        for c in in_range.columns
+        if c == "out.site_energy.total.energy_consumption" or c.startswith("out.site_energy.total.energy_consumption..")
     )
     eligible = in_range[in_range["bldg_id"].isin(selection.bldg_ids)]
     eui = pd.to_numeric(eligible[energy_column], errors="coerce") / pd.to_numeric(eligible[sqft_column], errors="coerce")
