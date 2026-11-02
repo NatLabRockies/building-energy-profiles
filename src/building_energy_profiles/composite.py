@@ -687,7 +687,7 @@ def _pull_sized_time_series(
     # next-closest-to-median building.
     processor = cls(upgrade=upgrade, **kwargs)
     metadata = baseline if upgrade == "0" else processor.process_metadata(save_dir=meta_dir)
-    ts_dir = processor.base_dir / "timeseries" / f"upgrade_{upgrade}"
+    ts_dir = processor.base_dir / "timeseries" / processor._cache_release_label() / f"upgrade_{upgrade}"
     ts_dir.mkdir(parents=True, exist_ok=True)
     rejected: list[str] = []
     for bldg_id in candidates:
