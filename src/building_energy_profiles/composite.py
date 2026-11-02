@@ -600,8 +600,16 @@ def pull_sized_time_series(
     """
     # The upgrade only exists for ComStock, so the flag is ignored for ResStock.
     ideal_thermal_air_loads = ideal_thermal_air_loads and product.strip().lower() == "comstock"
-    args = (product, upgrade, ideal_thermal_air_loads,
-            county_name, release, value_columns, sqft_tolerance_pct, max_candidates,)
+    args = (
+        product,
+        upgrade,
+        ideal_thermal_air_loads,
+        county_name,
+        release,
+        value_columns,
+        sqft_tolerance_pct,
+        max_candidates,
+    )
     if cache_metadata:
         return _pull_sized_time_series(building_type, sqft, state, save_dir, None, *args)
     with tempfile.TemporaryDirectory() as tmp:
@@ -627,12 +635,12 @@ def _pull_sized_time_series(
     cls: type[BuildStockProcessor] = ComStockProcessor if product.strip().lower() == "comstock" else ResStockProcessor
     # Shared processor arguments; base_dir includes sqft so different sizes don't share a cache folder.
     kwargs: dict[str, object] = {
-        "state": state, 
-        "county_name": county_name, 
-        "building_type": building_type, 
-        "base_dir": Path(save_dir) / product.strip().lower() / (building_type.strip().lower() + f'-{sqft}')
+        "state": state,
+        "county_name": county_name,
+        "building_type": building_type,
+        "base_dir": Path(save_dir) / product.strip().lower() / (building_type.strip().lower() + f"-{sqft}"),
     }
-    
+
     if release:
         kwargs["release"] = release
     Path(kwargs["base_dir"]).mkdir(parents=True, exist_ok=True)  # type: ignore[arg-type]
