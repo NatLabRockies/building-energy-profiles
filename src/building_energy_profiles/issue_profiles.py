@@ -537,10 +537,7 @@ def pool_profiles(
     pct = {f"pct_{f}": float((pool[f] < eui[f]).mean() * 100) for f in ("site", "electricity", "natural_gas")}
     metrics: dict[str, float] = {**pct, "site_eui": eui["site"], "pool_site_p50": float(pool.site.median()), "pool_n": float(len(pool))}
     flags: list[IssueFlag] = []
-    has_gas = (
-        eui["natural_gas"] > 0.01 * eui["site"]
-        or float(pool.natural_gas.median()) > 0.01 * float(pool.site.median())
-    )
+    has_gas = eui["natural_gas"] > 0.01 * eui["site"] or float(pool.natural_gas.median()) > 0.01 * float(pool.site.median())
     pe, pg = pct["pct_electricity"], pct["pct_natural_gas"]
     re_ = eui["electricity"] / max(float(pool.electricity.median()), 1e-9)
     rg = eui["natural_gas"] / max(float(pool.natural_gas.median()), 1e-9)

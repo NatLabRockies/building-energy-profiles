@@ -12,7 +12,13 @@ import pytest
 
 import building_energy_profiles.location as location_module
 from api.config import Settings
-from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyStarComponentIn, MeasuresCompareRequest, MetadataSummaryRequest
+from api.schemas import (
+    CompositeComponentSpec,
+    CompositeResolveRequest,
+    EnergyStarComponentIn,
+    MeasuresCompareRequest,
+    MetadataSummaryRequest,
+)
 from api.services import (
     ServiceError,
     _apply_component_filters,
@@ -460,7 +466,7 @@ def test_comstock_sqft_warnings_require_explicit_target(tmp_path, monkeypatch, e
                 sqft=fraction * 41_000 if explicit_target else None,
             )
         )
-    monkeypatch.setattr("api.services._build_processor", lambda *args, **kwargs: processors[args[4]])
+    monkeypatch.setattr("api.services._build_processor", lambda *args, **_kwargs: processors[args[4]])
 
     if endpoint == "metadata_summary":
         summary_request = MetadataSummaryRequest(state="DE", components=components)
