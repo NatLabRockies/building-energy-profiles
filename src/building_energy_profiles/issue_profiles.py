@@ -265,12 +265,23 @@ def cohort_index(
             ok = (b0 > 0) & (v > 0)
             r = v[ok] / b0[ok]
             r = r[(r > 1 / 3) & (r < 3)]
-            out.append({"group": g, "year": int(y), "fuel": f, "index": float(np.median(r)) if len(r) >= min_n else np.nan, "n": len(r)})
+            out.append(
+                {
+                    "group": g,
+                    "year": int(y),
+                    "fuel": f,
+                    "index": float(np.median(r)) if len(r) >= min_n else np.nan,
+                    "n": len(r),
+                    "_ratios": r.tolist(),
+                }
+            )
     ci = pd.DataFrame(out)
     if ci.empty:
         return ci
-    allg = ci.groupby(["year", "fuel"])["index"].median().rename("all").reset_index()
-    ci = ci.merge(allg, on=["year", "fuel"])
+    pooled = ci.explode("_ratios")
+    pooled["_ratios"] = pd.to_numeric(pooled["_ratios"], errors="coerce")
+    allg = pooled.groupby(["year", "fuel"])["_ratios"].median().rename("all").reset_index()
+    ci = ci.drop(columns="_ratios").merge(allg, on=["year", "fuel"])
     ci["index"] = ci["index"].fillna(ci.pop("all"))
     return ci
 
