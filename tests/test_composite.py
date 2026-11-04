@@ -577,6 +577,18 @@ class TestPullCompositeTimeSeriesMixedProducts:
             expected_office * 100.0 + expected_units * 10.0
         )
 
+    def test_comstock_components_are_weighted_by_floor_area_share(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+        self._patch(monkeypatch, office_sqft=50_000.0, unit_sqft=20_000.0)
+        composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
+
+        combined, _series = pull_composite_time_series(
+            composite, save_dir=tmp_path, state="DE", value_columns=["out.electricity.total.energy_consumption"]
+        )
+
+        total_sqft = 0.7 * 50_000.0 + 0.3 * 20_000.0
+        expected = 0.7 * total_sqft / 50_000.0 * 100.0 + 0.3 * total_sqft / 20_000.0 * 10.0
+        assert combined["out.electricity.total.energy_consumption"].tolist() == pytest.approx([expected] * 4)
+
 
 class TestPullCompositeTimeSeries:
     """Integration test for the end-to-end download + combine workflow. Makes real network calls."""
@@ -609,14 +621,24 @@ class TestPullCompositeTimeSeries:
         assert "out.electricity.total.energy_consumption" in combined.columns
         assert len(combined) > 0
 
-        # The combined value at every timestamp should be the fraction-weighted sum of the two components.
-        office = component_series[("comstock", "MediumOffice")].set_index("timestamp")
-        retail = component_series[("comstock", "RetailStripmall")].set_index("timestamp")
-        expected_first = (
-            0.7 * office["out.electricity.total.energy_consumption"].iloc[0]
-            + 0.3 * retail["out.electricity.total.energy_consumption"].iloc[0]
-        )
-        assert combined["out.electricity.total.energy_consumption"].iloc[0] == pytest.approx(expected_first)
+        # Fractions are floor-area shares, not bare multipliers of differently sized buildings.
+        component_sqft = {}
+        for component in composite.components:
+            processor = ComStockProcessor(state="DE", building_type=component.building_type, base_dir=save_dir / "comstock")
+            metadata = processor.process_metadata(save_dir=processor.base_dir)
+            sqft_column = next(c for c in metadata.columns if c.startswith("in.sqft"))
+            bldg_id = component_series[component.key]["bldg_id"].iloc[0]
+            component_sqft[component.key] = float(metadata.loc[metadata["bldg_id"] == bldg_id, sqft_column].iloc[0])
+        total_sqft = sum(component.fraction * component_sqft[component.key] for component in composite.components)
+        for column in ["out.electricity.total.energy_consumption", "out.site_energy.total.energy_consumption"]:
+            expected = sum(
+                component.fraction
+                * total_sqft
+                / component_sqft[component.key]
+                * component_series[component.key].set_index("timestamp")[column]
+                for component in composite.components
+            )
+            pd.testing.assert_series_equal(combined.set_index("timestamp")[column], expected, check_dtype=False)
 
     @pytest.mark.integration
     def test_target_sqft_scales_result_linearly_with_square_footage_for_a_fixed_building(self):
