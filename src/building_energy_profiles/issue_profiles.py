@@ -316,7 +316,7 @@ def multi_year_profiles(
     annual: pd.DataFrame, *, baseline_year: int = 2018, index: pd.DataFrame | Mapping | None = None, group: str | None = None
 ) -> list[IssueFlag]:
     """Issue profiles from a building's own history (needs the baseline year and at least two later years)."""
-    annual = annual.sort_index()
+    annual = annual.loc[annual.index >= baseline_year].sort_index()
     res = residuals(annual, baseline_year=baseline_year, index=index, group=group)
     later = annual[annual.index > baseline_year]
     if len(later) < 2:
