@@ -401,7 +401,7 @@ class TestComponentScales:
         assert scales[self.MULTIFAMILY] == pytest.approx(25_000 / 900)
 
     @pytest.mark.unit
-    def test_all_comstock_keeps_bare_fractions(self):
+    def test_all_comstock_is_sized_by_floor_area_share(self):
         components = [
             CompositeComponentSpec(product="comstock", building_type="MediumOffice", fraction=0.7),
             CompositeComponentSpec(product="comstock", building_type="RetailStripmall", fraction=0.3),
@@ -409,8 +409,9 @@ class TestComponentScales:
 
         scales, area_scaled = _component_scales(components, {self.OFFICE: 50_000.0, ("comstock", "RetailStripmall"): 20_000.0}, None)
 
-        assert not area_scaled
-        assert scales == {self.OFFICE: 0.7, ("comstock", "RetailStripmall"): 0.3}
+        assert area_scaled
+        total = 0.7 * 50_000.0 + 0.3 * 20_000.0
+        assert scales == pytest.approx({self.OFFICE: 0.7 * total / 50_000.0, ("comstock", "RetailStripmall"): 0.3 * total / 20_000.0})
 
     @pytest.mark.unit
     def test_sqft_mode_scales_to_entered_square_footage(self):

@@ -417,7 +417,7 @@ class TestCombineCompositeTimeSeries:
                 weights={("comstock", "MediumOffice"): 2.0},
             )
 
-    def test_records_the_applied_weights_on_the_result(self):
+    def test_records_the_applied_weights_on_the_result(self, tmp_path):
         composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
         timestamps = pd.date_range("2018-01-01", periods=4, freq="15min")
         component_series = {
@@ -430,8 +430,9 @@ class TestCombineCompositeTimeSeries:
             composite, component_series, weights={("comstock", "MediumOffice"): 2.0, ("comstock", "RetailStripmall"): 3.0}
         )
 
-        assert by_fraction.attrs["component_weights"] == {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3}
-        assert by_weight.attrs["component_weights"] == {("comstock", "MediumOffice"): 2.0, ("comstock", "RetailStripmall"): 3.0}
+        assert by_fraction.attrs["component_weights"] == {"comstock:MediumOffice": 0.7, "comstock:RetailStripmall": 0.3}
+        assert by_weight.attrs["component_weights"] == {"comstock:MediumOffice": 2.0, "comstock:RetailStripmall": 3.0}
+        by_fraction.to_parquet(tmp_path / "combined.parquet")  # attrs must stay serializable
 
 
 class TestResolveFractionWeights:
@@ -466,11 +467,22 @@ class TestResolveFractionWeights:
         assert weights[("comstock", "MediumOffice")] == pytest.approx(0.6 * 200_000 / 50_000)
         assert weights[("resstock", "Multi-Family with 5+ Units")] == pytest.approx(0.4 * 200_000 / 900)
 
-    def test_all_comstock_composite_keeps_bare_fractions(self):
+    def test_all_comstock_composite_is_sized_by_floor_area_share(self):
+        """Fractions are floor-area shares even without ResStock: bare 0.7/0.3 multipliers of a 50k ft2 office
+        and a 20k ft2 retail building would give an 85/15 area split, not 70/30 (validation V4m)."""
         composite = CompositeBuildingType.from_fractions("Mixed", {("comstock", "MediumOffice"): 0.7, ("comstock", "RetailStripmall"): 0.3})
         component_sqft = {("comstock", "MediumOffice"): 50_000.0, ("comstock", "RetailStripmall"): 20_000.0}
 
-        assert resolve_fraction_weights(composite, component_sqft) is None
+        weights = resolve_fraction_weights(composite, component_sqft)
+
+        assert weights is not None
+        total = 0.7 * 50_000.0 + 0.3 * 20_000.0
+        assert weights == pytest.approx(
+            {("comstock", "MediumOffice"): 0.7 * total / 50_000.0, ("comstock", "RetailStripmall"): 0.3 * total / 20_000.0}
+        )
+        areas = {key: weights[key] * component_sqft[key] for key in weights}
+        assert areas[("comstock", "MediumOffice")] / sum(areas.values()) == pytest.approx(0.7)
+        assert sum(areas.values()) == pytest.approx(total)
 
     def test_all_resstock_composite_keeps_bare_fractions(self):
         """Every component is already a dwelling unit, so a per-unit blend is self-consistent and there's

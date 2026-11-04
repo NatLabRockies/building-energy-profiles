@@ -21,11 +21,14 @@ building.
 @author: nllong
 """
 
+from collections.abc import Mapping
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition, validate_release
+from .characteristics import BuildingCharacteristics
 from .data_dictionary import data_dictionary
 
 # The ResStock housing-type categories used in `in.geometry_building_type_recs`. Filtering on one of the
@@ -83,6 +86,7 @@ class ResStockProcessor(BuildStockProcessor):
         weather_year: str = DEFAULT_WEATHER_YEAR,
         min_sqft: float | None = None,
         max_sqft: float | None = None,
+        characteristics: BuildingCharacteristics | Mapping[str, Any] | None = None,
     ) -> None:
         """ResStockProcessor helps users download metadata and time series data from the ResStock dataset.
 
@@ -103,6 +107,9 @@ class ResStockProcessor(BuildStockProcessor):
                 SUPPORTED_WEATHER_YEARS. Defaults to DEFAULT_WEATHER_YEAR.
             min_sqft (float | None): if set, only include dwelling units with at least this square footage
             max_sqft (float | None): if set, only include dwelling units with at most this square footage
+            characteristics (BuildingCharacteristics | dict | None): optional building-characteristic
+                constraints, e.g. `{"heating_fuel": "natural_gas"}` or `{"has_district_heating": False}`.
+                See `building_energy_profiles.characteristics`.
         """
         validate_release(release, SUPPORTED_RELEASES, "ResStock")
         if weather_year not in SUPPORTED_WEATHER_YEARS:
@@ -121,6 +128,7 @@ class ResStockProcessor(BuildStockProcessor):
         self.weather_year = weather_year
         self.min_sqft = min_sqft
         self.max_sqft = max_sqft
+        self.characteristics = BuildingCharacteristics.coerce(characteristics)
 
         if not self.base_dir.exists():
             self.base_dir.mkdir()

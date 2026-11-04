@@ -67,6 +67,7 @@ from building_energy_profiles.energy_star_crosswalk import (
     refine_building_type_for_sqft,
 )
 from building_energy_profiles.resstock import ResStockProcessor
+from building_energy_profiles.timeseries import to_period_start
 
 # Fuel/end-use source names that are stock-level aggregates, not distinct fuels -- excluded from the
 # by-fuel breakdown so they don't double-count alongside their constituent fuels.
@@ -778,13 +779,13 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
 def _resample_hourly(data_frame: pd.DataFrame, columns: list[str], timestamp_column: str = "timestamp") -> pd.DataFrame:
     """Resample to hourly sums, then trim to exactly 8760 rows (a full year).
 
-    Resampling a full year of period-ending BuildStock time series lands one extra row exactly at the
-    following year's start (e.g. 2019-01-01T00:00:00 after a full 2018), which resample('h') buckets as
-    its own (near-empty) hour. Dropping any rows beyond the first 8760 gives callers a clean, standard
-    8760-row year for heat maps/load duration curves.
+    BuildStock time series are period-ending, so timestamps are first relabeled to interval starts
+    (`to_period_start()`); otherwise the year's last interval lands in a near-empty extra hour at the
+    following year's start and every hour is shifted by one interval. The 8760-row trim is kept as a guard
+    for leap years/partial inputs.
     """
     available = [column for column in columns if column in data_frame.columns]
-    indexed = data_frame.set_index(timestamp_column)
+    indexed = to_period_start(data_frame, timestamp_column).set_index(timestamp_column)
     resampled = indexed[available].resample("h").sum() if available else indexed.resample("h").size().to_frame("_count").iloc[:, :0]
     resampled.index.name = timestamp_column
     return resampled.reset_index().iloc[:8760]

@@ -174,6 +174,7 @@ def _processor_for(
         "base_dir": product_base_dir,
         "min_sqft": min_sqft,
         "max_sqft": max_sqft,
+        "characteristics": getattr(component, "characteristics", None),
     }
     release = (release_by_product or {}).get(component.key[0])
     if release:
@@ -402,7 +403,12 @@ def summarize_composite_metadata(
             display_energy = scale * annual_site_energy
             display_energy_range = (energy_range[0] * scale, energy_range[1] * scale) if energy_range is not None else None
             if not is_dwelling_unit_product(component.product):
-                warning = _sqft_bounds_warning(component, entry["metadata"], entry["sqft_column"], display_sqft)
+                # Only meaningful for user-entered sizes; a floor-area share of an inferred total isn't a target.
+                warning = (
+                    _sqft_bounds_warning(component, entry["metadata"], entry["sqft_column"], display_sqft)
+                    if target_sqft is not None or total_sqft is not None
+                    else None
+                )
                 if warning:
                     warnings.append(warning)
             elif target_sqft is None:

@@ -64,6 +64,7 @@ import pandas as pd
 from ._base import BuildStockProcessor
 from .building_condition import DEFAULT_BAND as BUILDING_CONDITION_DEFAULT_BAND
 from .building_condition import select_building_condition_sample
+from .characteristics import BuildingCharacteristics
 from .comstock import ComStockProcessor
 from .resstock import ResStockProcessor
 
@@ -81,8 +82,12 @@ class CompositeComponent:
     fraction: float
     """This component's share of the combined composite profile, in (0, 1]. All of an composite's component
     fractions must sum to 1.0."""
+    characteristics: BuildingCharacteristics | None = None
+    """Optional building-characteristic constraints for this component's sample (e.g. gas-heated offices),
+    passed to the component's processor. Accepts a `BuildingCharacteristics` or a plain dict."""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "characteristics", BuildingCharacteristics.coerce(self.characteristics))
         if not 0 < self.fraction <= 1:
             raise ValueError(f"CompositeComponent fraction must be in (0, 1], got {self.fraction}")
         normalized_product = self.product.strip().lower()
@@ -148,7 +153,12 @@ class CompositeBuildingType:
         return CompositeBuildingType(
             name=self.name,
             components=tuple(
-                CompositeComponent(product=component.product, building_type=component.building_type, fraction=component.fraction / total)
+                CompositeComponent(
+                    product=component.product,
+                    building_type=component.building_type,
+                    fraction=component.fraction / total,
+                    characteristics=component.characteristics,
+                )
                 for component in self.components
             ),
         )
@@ -246,8 +256,11 @@ def resolve_fraction_weights_for(
     (e.g. the API layer) that don't build a `CompositeBuildingType`. Fractions are assumed normalized.
     """
     if total_sqft is None:
-        if not any(is_dwelling_unit_product(product) for product, _building_type in fractions):
-            return None
+        # Fractions are floor-area shares. Without an explicit total, the composite's floor area is inferred
+        # from its whole-building (ComStock) components. This applies to ComStock-only composites too: using
+        # bare fractions as multipliers of differently sized representative buildings would silently change
+        # the floor-area mix (e.g. 70/30 office/retail of a 58k ft2 office and a 21k ft2 retail store is
+        # really 87/13 by area) -- see validation V4m.
         anchors = {key: fraction for key, fraction in fractions.items() if not is_dwelling_unit_product(key[0]) and component_sqft.get(key)}
         anchor_fraction = sum(anchors.values())
         if not anchor_fraction:
@@ -311,7 +324,7 @@ def combine_composite_time_series(
     Returns a DataFrame with `timestamp_column` plus one combined column per resolved value column, where
     `composite[column][t] = sum(weight * component_series[column][t] for component in composite)` (`weight`
     being `weights[component.key]` if given, else `component.fraction`). The multiplier actually applied to
-    each component is recorded in the result's `.attrs["component_weights"]`.
+    each component is recorded in the result's `.attrs["component_weights"]`, keyed `"product:building_type"`.
     """
     required_keys = [component.key for component in composite.components]
     if weights is not None:
@@ -367,7 +380,10 @@ def combine_composite_time_series(
 
     combined.index.name = timestamp_column
     combined = combined.reset_index()
-    combined.attrs["component_weights"] = applied_weights
+    # JSON-friendly keys ("product:building_type") so the frame can be written with to_parquet()/to_json().
+    combined.attrs["component_weights"] = {
+        f"{product}:{building_type}": weight for (product, building_type), weight in applied_weights.items()
+    }
     return combined
 
 
@@ -459,8 +475,11 @@ def pull_composite_time_series(
     component_sqft: dict[tuple[str, str], float] = {}
     # A mixed-product composite needs each component's floor area even in fraction mode, to turn a
     # dwelling-unit component's floor-area share into a unit count -- see resolve_fraction_weights().
-    mixes_products = len({component.key[0] for component in composite.components}) > 1
-    needs_sqft = target_sqft is not None or total_sqft is not None or mixes_products
+    # Any whole-building (ComStock) component anchors the composite's floor area, so fractions are resolved
+    # as floor-area shares -- see resolve_fraction_weights(). Only an all-ResStock composite (a per-unit blend
+    # that is already self-consistent) keeps bare fractions.
+    has_whole_building = any(not is_dwelling_unit_product(component.product) for component in composite.components)
+    needs_sqft = target_sqft is not None or total_sqft is not None or has_whole_building
     for component in composite.components:
         processor_cls: type[BuildStockProcessor] = (
             ComStockProcessor if component.product.strip().lower() == "comstock" else ResStockProcessor
@@ -476,6 +495,7 @@ def pull_composite_time_series(
             "base_dir": product_base_dir,
             "min_sqft": min_sqft,
             "max_sqft": max_sqft,
+            "characteristics": component.characteristics,
         }
         release = (release_by_product or {}).get(component.key[0])
         if release:
