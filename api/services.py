@@ -692,9 +692,10 @@ def get_metadata_summary(request: MetadataSummaryRequest, settings: Settings) ->
             display_sqft = scale * avg_sqft
             display_energy = scale * annual_site_energy
             if not is_dwelling_unit_product(component.product):
-                warning = _sqft_bounds_warning(component, metadata, entry["sqft_column"], display_sqft)
-                if warning:
-                    warnings.append(warning)
+                if target_sqft_map is not None:
+                    warning = _sqft_bounds_warning(component, metadata, entry["sqft_column"], display_sqft)
+                    if warning:
+                        warnings.append(warning)
             elif target_sqft_map is None:
                 label = component.label or component.building_type
                 warnings.append(
@@ -1307,7 +1308,7 @@ def compare_measures(request: MeasuresCompareRequest, settings: Settings) -> Mea
         combined_metadata = entry["combined_metadata"]
         scale = scales[(component.product, component.building_type)]
 
-        if area_scaled and not is_dwelling_unit_product(component.product):
+        if area_scaled and target_sqft_map is not None and not is_dwelling_unit_product(component.product):
             warning = _sqft_bounds_warning(
                 component,
                 entry["baseline_group_for_sqft"],
