@@ -624,7 +624,9 @@ class TestPullCompositeTimeSeries:
         # Fractions are floor-area shares, not bare multipliers of differently sized buildings.
         component_sqft = {}
         for component in composite.components:
-            processor = ComStockProcessor(state="DE", building_type=component.building_type, base_dir=save_dir / "comstock")
+            processor = ComStockProcessor(
+                state="DE", county_name="All", building_type=component.building_type, upgrade="0", base_dir=save_dir / "comstock"
+            )
             metadata = processor.process_metadata(save_dir=processor.base_dir)
             sqft_column = next(c for c in metadata.columns if c.startswith("in.sqft"))
             bldg_id = component_series[component.key]["bldg_id"].iloc[0]
