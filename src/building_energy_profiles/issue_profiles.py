@@ -567,7 +567,7 @@ def pool_profiles(
                 pct,
             )
         )
-    if type_pools and reported_type in type_pools:
+    if type_pools and reported_type in type_pools and len(type_pools[reported_type]) >= 5:
         fits = {t: type_fit(eui, p, bill_shape) for t, p in type_pools.items() if len(p) >= 5}
         best = min(fits, key=fits.get)
         metrics.update({f"fit_{t}": v for t, v in fits.items()})
