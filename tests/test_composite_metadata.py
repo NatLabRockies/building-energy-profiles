@@ -27,6 +27,13 @@ GAS_HEATING = "out.natural_gas.heating.energy_consumption"
 SITE_ENERGY = "out.site_energy.total.energy_consumption"
 
 
+# Fractions are floor-area shares (validation V4m): a 70/30 office/retail composite of a 50,000 ft2 office and
+# a 20,000 ft2 retail building is 41,000 ft2 with multipliers 0.7*41k/50k and 0.3*41k/20k -- not bare 0.7/0.3.
+COMPOSITE_SQFT = 0.7 * 50_000.0 + 0.3 * 20_000.0
+W_OFFICE = 0.7 * COMPOSITE_SQFT / 50_000.0
+W_RETAIL = 0.3 * COMPOSITE_SQFT / 20_000.0
+
+
 def _office_frame(n: int = 20, sqft: float = 50_000.0) -> pd.DataFrame:
     return pd.DataFrame(
         {
@@ -131,25 +138,31 @@ class TestSummarizeCompositeMetadata:
         result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE")
 
         assert result.weighted_building_count == 40
-        assert result.weighted_avg_sqft == pytest.approx(0.7 * 50_000 + 0.3 * 20_000)
-        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 100_000 + 0.3 * 35_000)
+        assert result.weighted_avg_sqft == pytest.approx(W_OFFICE * 50_000 + W_RETAIL * 20_000)
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(W_OFFICE * 100_000 + W_RETAIL * 35_000)
 
         electricity = next(v for v in result.by_fuel if v.key == "electricity")
-        assert electricity.annual_energy_kwh == pytest.approx(0.7 * 80_000 + 0.3 * 30_000)
+        assert electricity.annual_energy_kwh == pytest.approx(W_OFFICE * 80_000 + W_RETAIL * 30_000)
         gas = next(v for v in result.by_fuel if v.key == "natural_gas")
-        assert gas.annual_energy_kwh == pytest.approx(0.7 * 5_000 + 0.3 * 1_000)
+        assert gas.annual_energy_kwh == pytest.approx(W_OFFICE * 5_000 + W_RETAIL * 1_000)
         # site_energy is an aggregate source, not a real fuel -- excluded from by_fuel.
         assert not any(v.key == "site_energy" for v in result.by_fuel)
 
         heating = next(v for v in result.by_end_use if v.key == "heating")
-        assert heating.annual_energy_kwh == pytest.approx(0.7 * (20_000 + 5_000) + 0.3 * (4_000 + 1_000))
+        assert heating.annual_energy_kwh == pytest.approx(W_OFFICE * (20_000 + 5_000) + W_RETAIL * (4_000 + 1_000))
         # "total" is a rollup label, not a real end use -- excluded from by_end_use.
         assert not any(v.key == "total" for v in result.by_end_use)
 
         office_summary = next(c for c in result.components if c.building_type == "MediumOffice")
         assert office_summary.building_count == 20
-        assert office_summary.avg_sqft == pytest.approx(50_000)
+        # Component values are this component's share of the composite floor area (70% of 41,000 ft2).
+        assert office_summary.avg_sqft == pytest.approx(0.7 * COMPOSITE_SQFT)
+        assert office_summary.unit_multiplier == pytest.approx(W_OFFICE)
         assert office_summary.site_eui_kbtu_per_ft2 == pytest.approx(100_000 * KWH_TO_KBTU / 50_000)
+        assert result.weighted_site_eui_kbtu_per_ft2 == pytest.approx(
+            (0.7 * 100_000 / 50_000 + 0.3 * 35_000 / 20_000) * KWH_TO_KBTU
+        )  # area-weighted mean of component EUIs
+        assert not result.warnings
 
     def test_target_sqft_mode_scales_and_warns_outside_range(self, patch_metadata, tmp_path):
         frames, _upgrade_frames, _upgrades_lookup = patch_metadata
@@ -221,7 +234,7 @@ class TestSummarizeCompositeMetadata:
         assert multifamily.unit_multiplier == pytest.approx(100_000 / 900)
         assert result.weighted_avg_sqft == pytest.approx(200_000)
 
-    def test_all_comstock_fraction_mode_is_unaffected_by_unit_scaling(self, patch_metadata, tmp_path):
+    def test_all_comstock_fraction_mode_is_sized_by_floor_area_share(self, patch_metadata, tmp_path):
         frames, _upgrade_frames, _upgrades_lookup = patch_metadata
         frames[("comstock", "MediumOffice")] = _office_frame()
         frames[("comstock", "RetailStripmall")] = _retail_frame()
@@ -229,8 +242,11 @@ class TestSummarizeCompositeMetadata:
 
         result = summarize_composite_metadata(composite, save_dir=tmp_path, state="DE")
 
-        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 100_000 + 0.3 * 35_000)
-        assert all(c.unit_multiplier is None for c in result.components)
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(W_OFFICE * 100_000 + W_RETAIL * 35_000)
+        multipliers = {c.building_type: c.unit_multiplier for c in result.components}
+        assert multipliers == pytest.approx({"MediumOffice": W_OFFICE, "RetailStripmall": W_RETAIL})
+        areas = {c.building_type: c.avg_sqft for c in result.components}
+        assert areas["MediumOffice"] / sum(areas.values()) == pytest.approx(0.7)
 
     def test_non_normalized_fractions_raise_in_fraction_mode(self, patch_metadata, tmp_path):
         frames, _upgrade_frames, _upgrades_lookup = patch_metadata
@@ -278,8 +294,8 @@ class TestCompareCompositeMeasures:
 
         savings = result.results[ELECTRICITY_TOTAL][0]
         assert savings.name == "HVAC upgrade"
-        assert savings.baseline_kwh == pytest.approx(0.7 * 80_000 + 0.3 * 30_000)
-        assert savings.upgrade_kwh == pytest.approx(0.7 * 60_000 + 0.3 * 24_000)
+        assert savings.baseline_kwh == pytest.approx(W_OFFICE * 80_000 + W_RETAIL * 30_000)
+        assert savings.upgrade_kwh == pytest.approx(W_OFFICE * 60_000 + W_RETAIL * 24_000)
         assert savings.absolute_savings_kwh == pytest.approx(savings.baseline_kwh - savings.upgrade_kwh)
         assert "5" in result.by_end_use
 
@@ -338,11 +354,10 @@ class TestSummarizeCompositeMetadataBuildingCondition:
         assert office_summary.building_condition_percentile is None
         assert office_summary.condition_sample_size is None
         assert office_summary.annual_site_energy_kwh_range is None
-        # Component-level annual_site_energy_kwh is this building's own (unscaled) value -- only the
-        # composite's weighted_annual_site_energy_kwh applies each component's fraction. Full-sample mean
+        # Component-level values are scaled to the component's floor-area share of the composite. Full-sample mean
         # of 1000..100000 (step 1000) is 50,500.
-        assert office_summary.annual_site_energy_kwh == pytest.approx(50_500.0)
-        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 50_500.0 + 0.3 * 35_000.0)
+        assert office_summary.annual_site_energy_kwh == pytest.approx(W_OFFICE * 50_500.0)
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(W_OFFICE * 50_500.0 + W_RETAIL * 35_000.0)
 
     def test_building_condition_uses_median_of_percentile_band(self, patch_metadata, tmp_path):
         frames, _upgrade_frames, _upgrades_lookup = patch_metadata
@@ -360,14 +375,14 @@ class TestSummarizeCompositeMetadataBuildingCondition:
         # Band selects bldg_ids 44-53 (energy 45,000-54,000); median 49,500, distinct from the full
         # sample's mean of 50,500 -- proving median (not mean) is used when building_condition is set.
         # Component-level values are unscaled (see note above); the range should share that scale.
-        assert office_summary.annual_site_energy_kwh == pytest.approx(49_500.0)
-        assert office_summary.annual_site_energy_kwh_range == pytest.approx((45_000.0, 54_000.0))
-        assert result.weighted_annual_site_energy_kwh == pytest.approx(0.7 * 49_500.0 + 0.3 * 35_000.0)
+        assert office_summary.annual_site_energy_kwh == pytest.approx(W_OFFICE * 49_500.0)
+        assert office_summary.annual_site_energy_kwh_range == pytest.approx((W_OFFICE * 45_000.0, W_OFFICE * 54_000.0))
+        assert result.weighted_annual_site_energy_kwh == pytest.approx(W_OFFICE * 49_500.0 + W_RETAIL * 35_000.0)
 
         # The unaffected retail component keeps using its full-sample mean (constant, so mean==median here).
         retail_summary = next(c for c in result.components if c.building_type == "RetailStripmall")
         assert retail_summary.building_condition_percentile is None
-        assert retail_summary.annual_site_energy_kwh == pytest.approx(35_000.0)
+        assert retail_summary.annual_site_energy_kwh == pytest.approx(W_RETAIL * 35_000.0)
 
 
 class TestCompareCompositeMeasuresBuildingCondition:
@@ -407,11 +422,11 @@ class TestCompareCompositeMeasuresBuildingCondition:
         )
 
         savings = result.results[SITE_ENERGY][0]
-        assert savings.baseline_kwh == pytest.approx(0.7 * 49_500.0 + 0.3 * 35_000.0)
+        assert savings.baseline_kwh == pytest.approx(W_OFFICE * 49_500.0 + W_RETAIL * 35_000.0)
         # Reusing baseline's bldg_ids 44-53 against the *shifted* upgrade frame lands on upgrade energies
         # 82,000-91,000 (median 86,500) -- re-selecting from the upgrade's own distribution instead would
         # incorrectly give ~45,150 (the same as baseline, i.e. 0 apparent savings).
-        assert savings.upgrade_kwh == pytest.approx(0.7 * 86_500.0 + 0.3 * 35_000.0)
+        assert savings.upgrade_kwh == pytest.approx(W_OFFICE * 86_500.0 + W_RETAIL * 35_000.0)
 
     def test_small_band_sample_size_warns(self, patch_metadata, tmp_path):
         _frames, upgrade_frames, upgrades_lookup = patch_metadata

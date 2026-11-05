@@ -64,6 +64,7 @@ from typing import Any
 import pandas as pd
 
 from ._base import BuildStockProcessor
+from .characteristics import BuildingCharacteristics
 from .comstock import ComStockProcessor
 from .resstock import ResStockProcessor
 
@@ -98,8 +99,12 @@ class PortfolioComponent:
     """This component's share, in (0, 1), of the *total* portfolio's floor area -- resolved against the
     other components' resolved square footage (see module docstring). Requires at least one other
     component in the same portfolio to set `target_sqft`/`target_units`."""
+    characteristics: BuildingCharacteristics | None = None
+    """Optional building-characteristic constraints for this component's sample (see
+    `building_energy_profiles.characteristics`). Accepts a `BuildingCharacteristics` or a plain dict."""
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "characteristics", BuildingCharacteristics.coerce(self.characteristics))
         normalized_product = self.product.strip().lower()
         if normalized_product not in {"comstock", "resstock"}:
             raise ValueError(f"PortfolioComponent product must be 'comstock' or 'resstock', got {self.product!r}")
@@ -217,6 +222,7 @@ def _processor_for(
         "base_dir": product_base_dir,
         "min_sqft": min_sqft,
         "max_sqft": max_sqft,
+        "characteristics": getattr(component, "characteristics", None),
     }
     release = (release_by_product or {}).get(component.key[0])
     if release:

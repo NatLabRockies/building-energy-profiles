@@ -29,6 +29,8 @@ import pyarrow.parquet as pq
 import requests
 from tqdm import tqdm
 
+from .characteristics import BuildingCharacteristics
+
 # Region hosting the public, unauthenticated oedi-data-lake bucket. Passing this explicitly avoids an
 # extra HEAD request PyArrow would otherwise make to auto-detect it.
 _S3_REGION = "us-west-2"
@@ -131,6 +133,9 @@ class BuildStockProcessor(ABC):
     min_sqft: float | None
     max_sqft: float | None
     _metadata_key_prefix: str
+    # Optional building-characteristic constraints (fuels, district energy, arbitrary in.* columns); see
+    # `characteristics.BuildingCharacteristics`. None means unconstrained.
+    characteristics: BuildingCharacteristics | None = None
 
     def download_file(self, url: str, save_path: Path) -> None:
         response = requests.get(url, timeout=300)
@@ -218,10 +223,24 @@ class BuildStockProcessor(ABC):
         return self.release
 
     def _selected_metadata_path(self, save_dir: Path, upgrade_label: str) -> Path:
+        # Constrained samples get their own cache file (unconstrained names are unchanged, so existing caches
+        # stay valid).
+        characteristics_label = f"{self.characteristics.label()}-" if self.characteristics else ""
         return (
             save_dir / f"{self._cache_release_label()}-{self.state}-{scope_label(self.county_name)}-{self.building_type}-"
-            f"{sqft_label(self.min_sqft, self.max_sqft)}-{upgrade_label}-selected_metadata.csv"
+            f"{sqft_label(self.min_sqft, self.max_sqft)}-{characteristics_label}{upgrade_label}-selected_metadata.csv"
         )
+
+    def _apply_characteristics(self, meta_df: pd.DataFrame, save_dir: Path, upgrade: str) -> pd.DataFrame:
+        """Apply `self.characteristics`. Fuel-presence flags are judged on the baseline (upgrade "0") results so
+        every upgrade keeps the same buildings."""
+        if not self.characteristics or meta_df.empty:
+            return meta_df
+        if self.characteristics.uses_baseline_results and str(upgrade) != "0":
+            baseline_ids = set(self._download_metadata_for_upgrade(save_dir, "0")["bldg_id"])
+            meta_df = self.characteristics.apply_inputs(meta_df, self.product_name)
+            return meta_df[meta_df["bldg_id"].isin(baseline_ids)]
+        return self.characteristics.apply(meta_df, self.product_name)
 
     @staticmethod
     def _read_cached_metadata(path: Path) -> pd.DataFrame:
@@ -297,7 +316,8 @@ class BuildStockProcessor(ABC):
             # statistics allow it -- rather than always materializing every row into pandas first.
             dataset = ds.dataset([str(path) for path in partition_files], format="parquet")
             meta_df = dataset.to_table(filter=self._sqft_filter_expression()).to_pandas()
-            meta_df = self._filter_metadata(meta_df).reset_index(drop=True)
+            meta_df = self._filter_metadata(meta_df)
+            meta_df = self._apply_characteristics(meta_df, save_dir, upgrade).reset_index(drop=True)
 
         meta_df.to_csv(output_csv, index=False)
         return meta_df

@@ -151,6 +151,69 @@ for path, building_id in zip(paths, building_ids):
 
 The downloader caches files by building ID and upgrade. Existing files are reused.
 
+Time series timestamps are **period-ending** (a full 2018 year at 15-minute resolution runs from
+2018-01-01 00:15 to 2019-01-01 00:00). Use `resample_time_series()` (or `to_period_start()`) before calendar
+aggregation; a plain `resample("MS")` on raw timestamps creates a near-empty extra "2019-01" period and moves
+one interval into the wrong month at every boundary.
+
+```python
+from building_energy_profiles import resample_time_series
+
+monthly = resample_time_series(pd.read_parquet(paths[0]), "monthly", ["out.electricity.total.energy_consumption"])
+assert len(monthly) == 12
+```
+
+## Constrain on Building Characteristics
+
+Type, geography, and floor area are often not enough to represent a real building. The biggest remaining
+difference is usually **fuel**: in Washington, DC, ComStock offices are a mix of gas-, electric-, and
+district-heated buildings, so an unconstrained office sample spreads heating energy across meters that a
+specific building does not have. Pass `characteristics=` to either processor (or to a composite/portfolio
+component) to keep only buildings that match:
+
+```python
+from building_energy_profiles import BuildingCharacteristics, ComStockProcessor
+
+gas_offices = ComStockProcessor(
+    state="DC",
+    county_name="All",
+    building_type="MediumOffice",
+    upgrade="0",
+    base_dir=comstock_dir,
+    characteristics={"heating_fuel": "natural_gas", "has_district_heating": False},
+).process_metadata(save_dir=comstock_dir)
+```
+
+| Field | Meaning |
+| --- | --- |
+| `heating_fuel` | Primary space-heating fuel(s), from `in.heating_fuel`. |
+| `water_heating_fuel` | Water-heating fuel(s), from `in.service_water_heating_fuel` (ComStock) or `in.water_heater_fuel` (ResStock). |
+| `cooling_type` | Space-cooling system(s): `district`, `chiller`, `dx`, `heat_pump`, `none`, from `in.hvac_cool_type` (ComStock) or `in.hvac_cooling_type` (ResStock). ResStock has no `district` or `chiller`. |
+| `has_natural_gas` | `True`/`False`: the building uses any natural gas (baseline annual gas > 0), e.g. an electrically heated building with gas water heating or cooking still counts. |
+| `has_district_heating` / `has_district_cooling` | `True`/`False` on baseline district heating / chilled water use. ResStock models neither. |
+| `attributes` | Exact match on any other metadata column, e.g. `{"in.hvac_category": "Small Packaged Unit"}`. |
+
+Fuel names are product-neutral (`natural_gas`, `electricity`, `district_heating`, `propane`, `fuel_oil`,
+`other`) and are mapped to each product's own values. The `has_*` flags are always judged on the baseline
+(upgrade `"0"`) results, so a gas building stays in the sample for an electrification upgrade and
+baseline-vs-upgrade comparisons remain like-for-like. Constrained samples are cached under their own file
+name (the constraint label, e.g. `hf_natural_gas-dh0`, is added to the selected-metadata CSV name).
+
+District heating is a real end use in ComStock: district-heated buildings report it in
+`out.district_heating.*` (heating and water-systems end uses, annual and time series) and include it in
+`out.site_energy.total`; most district-heated ComStock buildings are also district-cooled (`out.district_cooling.*`),
+which lowers their electricity. Keep those
+buildings when the real building is on a steam/hot-water loop; exclude them (`has_district_heating=False, has_district_cooling=False`)
+when comparing against gas and electric bills only.
+
+District cooling is handled the same way. In ComStock DC (release 3) 40 buildings are district-cooled (24 large
+offices, 8 medium offices, 5 primary schools, 3 hospitals); 35 of them are also district-heated. District chilled
+water is reported in `out.district_cooling.cooling.*` and `out.district_cooling.total.*` (annual and 15-min), is
+included in `out.site_energy.total`, and is a median 52% of these buildings' site energy -- so their electricity is
+far below an electrically cooled building's. `cooling_type="district"` (inputs) and `has_district_cooling=True`
+(baseline results) select the same buildings in the baseline; use the input form when the real building's plant is
+known, and match a chilled-water meter (ENERGY STAR "District Chilled Water") against `out.district_cooling.total`.
+
 ## Download Building Energy Models
 
 Each sampled building also has a published energy model file on the OEDI data lake -- a gzipped OpenStudio
@@ -401,3 +464,44 @@ uv run jupyter nbconvert \
   --execute 02_washington_dc_stock_analysis.ipynb \
   --output dc-stock-analysis.html
 ```
+
+## Find the Closest Matching Buildings
+
+`find_nearest_buildings` ranks a metadata sample by how close each simulated building is to a real one, using the
+log-ratio distance `d = sqrt(sum_j w_j * ln(x_j / x_j,target)^2)` over floor area and/or annual site EUI (kBtu/ft2).
+Apply type, location and `BuildingCharacteristics` constraints first; the function only ranks what is left.
+
+```python
+from building_energy_profiles import BuildingCharacteristics, find_nearest_buildings
+
+offices = meta[meta["in.comstock_building_type"].isin(["MediumOffice", "LargeOffice"])]
+offices = BuildingCharacteristics(heating_fuel="natural_gas", has_district_heating=False).apply(offices, "comstock")
+
+one_shot = find_nearest_buildings(offices, sqft=115_882, site_eui_kbtu_per_ft2=53.7, k=1)   # use as published
+scaled = find_nearest_buildings(offices, sqft=115_882, site_eui_kbtu_per_ft2=53.7, k=10)    # average intensity x floor area
+```
+
+The result carries `match_distance` and `match_rank` columns. For ResStock (one dwelling unit per row), match on EUI only.
+If the EUI target comes from the same bills you will compare against, take it from a different year.
+
+## Issue profiles: what a building's bills say about its record
+
+`building_energy_profiles.issue_profiles` screens real utility bills against BuildStock and against the building's
+own history. Each flag carries evidence, likely causes and the next data to request (`CATALOG`); they are screening
+hints for a data steward, not verified causes.
+
+```python
+from building_energy_profiles import BuildingCharacteristics, issue_profiles as ip
+
+annual = ip.annual_bills(monthly)             # monthly: year, month, electricity, natural_gas, ... in kBtu
+pool = ip.pool_euis(constrained_metadata)      # the lookup's candidate pool (type, fuels, floor-area band)
+flags, metrics = ip.pool_profiles(annual.loc[2018], gfa, pool, reported_type="Office",
+                                  type_pools={"Office": office_pool, "Hotel": hotel_pool})
+
+# later years: divide by the peers' median change (weather, COVID-19) before comparing with the baseline
+index = ip.cohort_index(all_buildings_annual, building_col="property_id", group_col="type_group")
+flags += ip.multi_year_profiles(annual, baseline_year=2018, index=index, group="Office")
+```
+
+Pool checks need bills from the BuildStock weather year (AMY2018) or later bills divided by the peer index.
+Multi-year checks need no BuildStock data. The MCP server exposes both as `screen_issue_profiles`.

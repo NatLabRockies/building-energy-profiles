@@ -7,12 +7,15 @@ from NLR's ComStock dataset hosted on AWS S3.
 @author: nllong
 """
 
+from collections.abc import Mapping
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
 from ._base import BuildStockProcessor, BuildStockRelease, MetadataPartition, validate_release
+from .characteristics import BuildingCharacteristics
 from .data_dictionary import data_dictionary
 
 # The last three published releases of the ComStock AMY2018 dataset. All three are hosted, as of
@@ -55,6 +58,7 @@ class ComStockProcessor(BuildStockProcessor):
         release: str = DEFAULT_RELEASE,
         min_sqft: float | None = None,
         max_sqft: float | None = None,
+        characteristics: BuildingCharacteristics | Mapping[str, Any] | None = None,
     ) -> None:
         """ComStockProcess class helps users download metadata and time series data from the ComStock dataset.
 
@@ -70,6 +74,9 @@ class ComStockProcessor(BuildStockProcessor):
                 Defaults to DEFAULT_RELEASE (the most recent supported release).
             min_sqft (float | None): if set, only include buildings with at least this square footage
             max_sqft (float | None): if set, only include buildings with at most this square footage
+            characteristics (BuildingCharacteristics | dict | None): optional building-characteristic
+                constraints, e.g. `{"heating_fuel": "natural_gas"}` or `{"has_district_heating": False}`.
+                See `building_energy_profiles.characteristics`.
         """
         validate_release(release, SUPPORTED_RELEASES, "ComStock")
 
@@ -81,6 +88,7 @@ class ComStockProcessor(BuildStockProcessor):
         self.release = release
         self.min_sqft = min_sqft
         self.max_sqft = max_sqft
+        self.characteristics = BuildingCharacteristics.coerce(characteristics)
 
         if not self.base_dir.exists():
             self.base_dir.mkdir()

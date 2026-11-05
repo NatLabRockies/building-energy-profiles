@@ -5,13 +5,20 @@ tests/test_api_main.py's integration tests instead.
 """
 
 from pathlib import Path
+from unittest.mock import Mock
 
 import pandas as pd
 import pytest
 
 import building_energy_profiles.location as location_module
 from api.config import Settings
-from api.schemas import CompositeComponentSpec, CompositeResolveRequest, EnergyStarComponentIn
+from api.schemas import (
+    CompositeComponentSpec,
+    CompositeResolveRequest,
+    EnergyStarComponentIn,
+    MeasuresCompareRequest,
+    MetadataSummaryRequest,
+)
 from api.services import (
     ServiceError,
     _apply_component_filters,
@@ -21,6 +28,8 @@ from api.services import (
     _frame_to_records,
     _resample_hourly,
     _sqft_bounds_warning,
+    compare_measures,
+    get_metadata_summary,
     get_model_download_url,
     list_available_counties,
     list_available_states,
@@ -401,7 +410,7 @@ class TestComponentScales:
         assert scales[self.MULTIFAMILY] == pytest.approx(25_000 / 900)
 
     @pytest.mark.unit
-    def test_all_comstock_keeps_bare_fractions(self):
+    def test_all_comstock_is_sized_by_floor_area_share(self):
         components = [
             CompositeComponentSpec(product="comstock", building_type="MediumOffice", fraction=0.7),
             CompositeComponentSpec(product="comstock", building_type="RetailStripmall", fraction=0.3),
@@ -409,8 +418,9 @@ class TestComponentScales:
 
         scales, area_scaled = _component_scales(components, {self.OFFICE: 50_000.0, ("comstock", "RetailStripmall"): 20_000.0}, None)
 
-        assert not area_scaled
-        assert scales == {self.OFFICE: 0.7, ("comstock", "RetailStripmall"): 0.3}
+        assert area_scaled
+        total = 0.7 * 50_000.0 + 0.3 * 20_000.0
+        assert scales == pytest.approx({self.OFFICE: 0.7 * total / 50_000.0, ("comstock", "RetailStripmall"): 0.3 * total / 20_000.0})
 
     @pytest.mark.unit
     def test_sqft_mode_scales_to_entered_square_footage(self):
@@ -426,6 +436,51 @@ class TestComponentScales:
     def test_sqft_mode_without_a_known_floor_area_raises(self):
         with pytest.raises(ServiceError, match="Could not determine floor area"):
             _component_scales(self._mixed_components(), {self.OFFICE: 50_000.0}, {self.OFFICE: 100_000.0, self.MULTIFAMILY: 45_000.0})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("endpoint", ["metadata_summary", "compare_measures"])
+@pytest.mark.parametrize("explicit_target", [False, True])
+def test_comstock_sqft_warnings_require_explicit_target(tmp_path, monkeypatch, endpoint, explicit_target):
+    processors = {}
+    components = []
+    for building_type, fraction, sqft in [("MediumOffice", 0.7, 50_000), ("RetailStripmall", 0.3, 20_000)]:
+        metadata = pd.DataFrame(
+            {
+                "bldg_id": [1, 1],
+                "upgrade": ["0", "1"],
+                "in.sqft": [sqft, sqft],
+                "out.site_energy.total.energy_consumption": [1_000.0, 800.0],
+            }
+        )
+        processor = Mock(base_dir=tmp_path)
+        processor.process_metadata.return_value = metadata[metadata["upgrade"] == "0"]
+        processor.process_metadata_for_upgrades.return_value = metadata
+        processor.list_upgrades.return_value = {}
+        processors[building_type] = processor
+        components.append(
+            CompositeComponentSpec(
+                product="comstock",
+                building_type=building_type,
+                fraction=fraction,
+                sqft=fraction * 41_000 if explicit_target else None,
+            )
+        )
+    monkeypatch.setattr("api.services._build_processor", lambda *args, **_kwargs: processors[args[4]])
+
+    if endpoint == "metadata_summary":
+        summary_request = MetadataSummaryRequest(state="DE", components=components)
+        warnings = get_metadata_summary(summary_request, _make_settings(tmp_path)).warnings
+    else:
+        comparison_request = MeasuresCompareRequest(state="DE", components=components, comparison_upgrades=["1"])
+        warnings = compare_measures(comparison_request, _make_settings(tmp_path)).warnings
+
+    if explicit_target:
+        assert len(warnings) == 2
+        assert "28,700" in warnings[0]
+        assert "12,300" in warnings[1]
+    else:
+        assert warnings == []
 
 
 class TestSqftBoundsWarning:
