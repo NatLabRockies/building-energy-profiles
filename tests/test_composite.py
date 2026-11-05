@@ -750,14 +750,27 @@ class TestPullCompositeTimeSeries:
         office_key = ("comstock", "MediumOffice")
         retail_key = ("comstock", "RetailStripmall")
 
+        # Pin the office to a building upgrade "1" actually applies to. ComStock publishes baseline results
+        # for buildings an upgrade isn't applicable to, so the default representative building (nearest to
+        # the sample's average floor area) can legitimately have identical baseline and upgrade profiles --
+        # which says nothing about whether the override was applied.
+        office_base_dir = save_dir / "comstock"
+        office_upgrade_metadata = ComStockProcessor(
+            state="DE", county_name="All", building_type="MediumOffice", upgrade="1", base_dir=office_base_dir
+        ).process_metadata(save_dir=office_base_dir)
+        applicable_offices = office_upgrade_metadata[office_upgrade_metadata["applicability"].astype(bool)]
+        assert not applicable_offices.empty, "No DE MediumOffice building is applicable to upgrade 1"
+        bldg_ids = {office_key: int(applicable_offices["bldg_id"].iloc[0])}
+
         _combined_baseline, component_series_baseline = pull_composite_time_series(
-            composite, save_dir=save_dir, state="DE", value_columns=value_columns
+            composite, save_dir=save_dir, state="DE", value_columns=value_columns, bldg_ids=bldg_ids
         )
         _combined_override, component_series_override = pull_composite_time_series(
             composite,
             save_dir=save_dir,
             state="DE",
             value_columns=value_columns,
+            bldg_ids=bldg_ids,
             upgrade_by_component={office_key: "1"},
         )
 
