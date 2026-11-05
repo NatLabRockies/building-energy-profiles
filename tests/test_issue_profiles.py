@@ -13,9 +13,9 @@ ELEC = np.array([10, 9, 9, 8, 9, 11, 12, 12, 10, 9, 9, 10], float) * 1000
 GAS = np.array([20, 18, 14, 8, 4, 2, 2, 2, 3, 6, 12, 18], float) * 1000
 
 
-def bills(elec_scale=None, gas_scale=None, mutate=None):
+def bills(elec_scale=None, gas_scale=None, mutate=None, years=YEARS):
     rows = []
-    for y in YEARS:
+    for y in years:
         e = ELEC * (elec_scale or {}).get(y, 1.0)
         g = GAS * (gas_scale or {}).get(y, 1.0)
         for mth in range(12):
@@ -106,6 +106,30 @@ def test_seasonal_shape_change():
     assert "seasonal shape change" in names(ip.multi_year_profiles(bills(mutate=flatten_gas)))
 
 
+def test_pre_baseline_years_are_ignored():
+    early = {2016: 2.0, 2017: 2.0}
+    a = bills(elec_scale=early, gas_scale=early, years=range(2016, 2023))
+    assert names(ip.multi_year_profiles(a)) == {"stable"}
+
+
+def test_cohort_index_fallback_pools_small_groups():
+    rows = [
+        {
+            "b": b,
+            "g": "A" if b < 3 else "B",
+            "year": y,
+            "electricity": 100.0 * (0.8 if y == 2020 else 1.0),
+            "natural_gas": 10.0,
+            "site": 110.0,
+        }
+        for b in range(6)
+        for y in (2018, 2020)
+    ]
+    ci = ip.cohort_index(pd.DataFrame(rows), building_col="b", group_col="g")
+    idx = ci[(ci.year == 2020) & (ci.fuel == "electricity")]["index"]
+    assert idx.tolist() == pytest.approx([0.8, 0.8])  # each group has 3 < min_n, but 6 pooled ratios do
+
+
 def test_cohort_index_median_and_fallback():
     rows = [
         {
@@ -148,6 +172,26 @@ def test_pool_low_high_partial():
     assert "low use" in names(ip.pool_profiles({"electricity": 15 * gfa, "natural_gas": 8 * gfa}, gfa, pool)[0])
     assert "high use" in names(ip.pool_profiles({"electricity": 80 * gfa, "natural_gas": 40 * gfa}, gfa, pool)[0])
     assert "partial meter coverage" in names(ip.pool_profiles({"electricity": 8 * gfa, "natural_gas": 20 * gfa}, gfa, pool)[0])
+
+
+def test_partial_meter_when_gas_bills_are_missing():
+    pool, gfa = _pool(), 1e5
+    assert "partial meter coverage" in names(ip.pool_profiles({"electricity": 40 * gfa}, gfa, pool)[0])
+    all_electric = _pool(gas=0.0)
+    all_electric["natural_gas"] = 0.0
+    assert "partial meter coverage" not in names(ip.pool_profiles({"electricity": 40 * gfa}, gfa, all_electric)[0])
+
+
+def test_misclassification_skipped_for_small_pools():
+    gfa = 1e5
+    annual = {"electricity": 60 * gfa, "natural_gas": 40 * gfa}
+    small_reported = {"Office": _pool(n=3, seed=1), "Hotel": _pool(elec=60, gas=40, seed=2)}
+    flags, _ = ip.pool_profiles(annual, gfa, small_reported["Hotel"], reported_type="Office", type_pools=small_reported)
+    assert "possible misclassification" not in names(flags)
+    all_small = {"Office": _pool(n=3, seed=1), "Hotel": _pool(n=3, seed=2)}
+    flags, m = ip.pool_profiles(annual, gfa, _pool(), reported_type="Office", type_pools=all_small)
+    assert "possible misclassification" not in names(flags)
+    assert not any(k.startswith("fit_") for k in m)
 
 
 def test_misclassification():
