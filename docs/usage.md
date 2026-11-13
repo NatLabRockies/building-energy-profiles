@@ -486,22 +486,8 @@ If the EUI target comes from the same bills you will compare against, take it fr
 
 ## Issue profiles: what a building's bills say about its record
 
-`building_energy_profiles.issue_profiles` screens real utility bills against BuildStock and against the building's
-own history. Each flag carries evidence, likely causes and the next data to request (`CATALOG`); they are screening
-hints for a data steward, not verified causes.
-
-```python
-from building_energy_profiles import BuildingCharacteristics, issue_profiles as ip
-
-annual = ip.annual_bills(monthly)             # monthly: year, month, electricity, natural_gas, ... in kBtu
-pool = ip.pool_euis(constrained_metadata)      # the lookup's candidate pool (type, fuels, floor-area band)
-flags, metrics = ip.pool_profiles(annual.loc[2018], gfa, pool, reported_type="Office",
-                                  type_pools={"Office": office_pool, "Hotel": hotel_pool})
-
-# later years: divide by the peers' median change (weather, COVID-19) before comparing with the baseline
-index = ip.cohort_index(all_buildings_annual, building_col="property_id", group_col="type_group")
-flags += ip.multi_year_profiles(annual, baseline_year=2018, index=index, group="Office")
-```
-
-Pool checks need bills from the BuildStock weather year (AMY2018) or later bills divided by the peer index.
-Multi-year checks need no BuildStock data. The MCP server exposes both as `screen_issue_profiles`.
+Issue profiling screens real utility bills, so it now lives in
+[seed-mcp](https://github.com/SEED-platform/seed-mcp) (`mcp_server.skills.issue_profiles`, exposed as the
+`screen_issue_profiles` and `screen_property_issue_profiles` MCP tools). Its pool checks still compare a building
+with a BuildStock candidate pool: constrain the metadata here (type, location, `BuildingCharacteristics`, floor-area
+band) and pass the per-building EUIs to seed-mcp (`analysis.pool_euis` builds them from the metadata).
