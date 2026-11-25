@@ -17,6 +17,7 @@ from .composite import (
     pull_composite_time_series,
     pull_sized_time_series,
     resolve_fraction_weights,
+    temporary_metadata_cache,
 )
 from .composite_metadata import (
     ComponentMetadataSummary,
@@ -94,6 +95,7 @@ __all__ = [
     "normalize_time_series_columns",
     "pull_composite_time_series",
     "pull_sized_time_series",
+    "temporary_metadata_cache",
     "refine_building_type_for_sqft",
     "resolve_fraction_weights",
     "result_variables_from_columns",

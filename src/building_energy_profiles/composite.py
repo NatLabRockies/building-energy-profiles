@@ -55,6 +55,8 @@ from __future__ import annotations
 
 import math
 import tempfile
+from collections.abc import Iterator
+from contextlib import contextmanager
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -558,6 +560,16 @@ REQUIRED_TIME_SERIES_COLUMNS: dict[str, list[str]] = {
 }
 
 
+@contextmanager
+def temporary_metadata_cache() -> Iterator[Path]:
+    """Temporary directory for sharing raw metadata across `pull_sized_time_series` calls.
+
+    Pass the yielded path as `metadata_dir`; it is deleted when the `with` block exits.
+    """
+    with tempfile.TemporaryDirectory() as tmp:
+        yield Path(tmp)
+
+
 def pull_sized_time_series(
     building_type: str,
     sqft: float,
@@ -572,6 +584,7 @@ def pull_sized_time_series(
     sqft_tolerance_pct: float = 10.0,
     cache_metadata: bool = False,
     max_candidates: int = 10,
+    metadata_dir: Path | None = None,
 ) -> pd.DataFrame:
     """Time series for a single building type scaled to an absolute floor area.
 
@@ -597,6 +610,9 @@ def pull_sized_time_series(
     By default only the selected building's time series parquet is kept under `save_dir`; metadata, raw
     partitions, and upgrade lookups go to a temporary directory deleted on return. With `cache_metadata=True`
     they are cached under `save_dir` and reused by later calls (faster, but uses more disk space).
+    Alternatively pass `metadata_dir` (e.g. from `temporary_metadata_cache()`) to share metadata across
+    calls for the lifetime of that directory only; the caller controls when it is deleted. It takes
+    precedence over `cache_metadata`.
     """
     # The upgrade only exists for ComStock, so the flag is ignored for ResStock.
     ideal_thermal_air_loads = ideal_thermal_air_loads and product.strip().lower() == "comstock"
@@ -610,6 +626,10 @@ def pull_sized_time_series(
         sqft_tolerance_pct,
         max_candidates,
     )
+    if metadata_dir is not None:
+        shared = Path(metadata_dir) / product.strip().lower()
+        shared.mkdir(parents=True, exist_ok=True)
+        return _pull_sized_time_series(building_type, sqft, state, save_dir, shared, *args)
     if cache_metadata:
         return _pull_sized_time_series(building_type, sqft, state, save_dir, None, *args)
     with tempfile.TemporaryDirectory() as tmp:
